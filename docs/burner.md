@@ -43,7 +43,7 @@ The curve file has no header and exactly two columns:
 ## Backends
 
 - CPU uses the patched `third_party/lookbusy/lookbusy`.
-- GPU uses `third_party/gpu-burn/gpu_burn` with duty-cycle pause/resume control.
+- GPU uses patched `third_party/gpu-burn/gpu_burn` with `--burn-util-file` so the CUDA work loop reads the live target utilization and throttles kernel submission internally.
 
 Build CPU support:
 

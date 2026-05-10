@@ -11,11 +11,19 @@ from warpper.curve import LoadCurve
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SINE = ROOT / "tests" / "fixtures" / "sine.csv"
 
 
-def test_generate_schedule_uses_curve_and_tick():
-    curve = LoadCurve.from_csv(SINE)
+def sine_curve_path(tmp_path):
+    path = tmp_path / "sine.csv"
+    path.write_text(
+        "0.0,0.5\n0.25,1.0\n0.5,0.5\n0.75,0.0\n1.0,0.5\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_generate_schedule_uses_curve_and_tick(tmp_path):
+    curve = LoadCurve.from_csv(sine_curve_path(tmp_path))
 
     schedule = list(generate_schedule(curve, duration=0.5, period=1.0, tick=0.25))
 
@@ -25,8 +33,8 @@ def test_generate_schedule_uses_curve_and_tick():
     ]
 
 
-def test_run_schedule_updates_all_backends_and_stops():
-    curve = LoadCurve.from_csv(SINE)
+def test_run_schedule_updates_all_backends_and_stops(tmp_path):
+    curve = LoadCurve.from_csv(sine_curve_path(tmp_path))
     cpu = MockBurnBackend("cpu")
     gpu = MockBurnBackend("gpu")
 
@@ -56,8 +64,8 @@ def run_burner_cli(*args):
     )
 
 
-def test_burner_cli_requires_cpu_or_gpu():
-    result = run_burner_cli("-f", str(SINE), "-t", "1s", "-p", "1s", "--mock-backend")
+def test_burner_cli_requires_cpu_or_gpu(tmp_path):
+    result = run_burner_cli("-f", str(sine_curve_path(tmp_path)), "-t", "1s", "-p", "1s", "--mock-backend")
 
     assert result.returncode != 0
     assert "at least one of --cpu or --gpu" in result.stderr
@@ -65,11 +73,12 @@ def test_burner_cli_requires_cpu_or_gpu():
 
 def test_burner_cli_mock_backend_writes_schedule_log(tmp_path):
     log_path = tmp_path / "schedule.csv"
+    curve_path = sine_curve_path(tmp_path)
 
     result = run_burner_cli(
         "--cpu",
         "-f",
-        str(SINE),
+        str(curve_path),
         "-t",
         "1s",
         "-p",
@@ -92,7 +101,7 @@ def test_burner_cli_mock_backend_writes_schedule_log(tmp_path):
     ]
 
 
-def test_gpu_backend_starts_from_gpu_burn_directory(tmp_path, monkeypatch):
+def test_gpu_backend_starts_from_gpu_burn_directory_with_util_file(tmp_path, monkeypatch):
     binary = tmp_path / "gpu_burn"
     binary.write_text("#!/bin/sh\n", encoding="utf-8")
     calls = {}
@@ -112,8 +121,38 @@ def test_gpu_backend_starts_from_gpu_burn_directory(tmp_path, monkeypatch):
     monkeypatch.setattr(burner_backends, "_terminate_process_group", lambda process: None)
 
     backend = DutyCycleGpuBackend(binary=binary)
-    backend.set_intensity(1.0, 0.0)
+    backend.set_intensity(0.5, 0.0)
+    assert backend._control_file is not None
+    assert backend._control_file.read_text(encoding="utf-8") == "50.000000\n"
     backend.stop()
 
-    assert calls["command"] == [str(binary), "-stts", "1", "86400"]
+    assert calls["command"][:5] == [str(binary), "-m", "900", "-stts", "1"]
+    assert calls["command"][5] == "--burn-util-file"
+    assert calls["command"][7] == "86400"
     assert calls["kwargs"]["cwd"] == str(tmp_path)
+
+
+def test_cpu_backend_writes_initial_intensity_before_start(tmp_path, monkeypatch):
+    binary = tmp_path / "lookbusy"
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    calls = {}
+
+    class FakeProcess:
+        pid = 123
+
+        def poll(self):
+            return None
+
+    def fake_popen(command, **kwargs):
+        control_path = Path(command[command.index("--cpu-util-file") + 1])
+        calls["initial"] = control_path.read_text(encoding="utf-8")
+        return FakeProcess()
+
+    monkeypatch.setattr(burner_backends.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(burner_backends, "_terminate_process_group", lambda process, timeout=5: None)
+
+    backend = burner_backends.LookbusyCpuBackend(binary=binary)
+    backend.set_intensity(0.5, 0.0)
+    backend.stop()
+
+    assert calls["initial"] == "50.000000\n"

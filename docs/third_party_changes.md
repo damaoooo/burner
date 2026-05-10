@@ -24,6 +24,25 @@ Compatibility:
 
 ## gpu-burn
 
-No source files are changed for the first implementation.
+File changed:
 
-`burner` controls GPU intensity externally by starting one long-running `gpu_burn` process and using duty-cycle `SIGSTOP` / `SIGCONT` control over its process group. This avoids deep CUDA kernel changes in the first version.
+- `third_party/gpu-burn/gpu_burn-drv.cpp`
+
+Reason:
+
+- External `SIGSTOP` / `SIGCONT` process control cannot reliably limit GPU utilization because CUDA kernels already submitted to the device keep running. `burner` needs the GPU load generator itself to throttle kernel submission according to the live curve target.
+
+Change:
+
+- Added `--burn-util-file FILE`.
+- Child GPU workers read the target utilization percentage from this file.
+- `0` means do not submit GPU work.
+- `100` means run continuously.
+- Intermediate values throttle inside the CUDA work loop by measuring completed work time and sleeping between iterations.
+- The Python backend starts gpu-burn with a smaller default memory window so each control cycle has finer granularity.
+- Invalid or unreadable control file values are treated as `0` when the option is used.
+
+Compatibility:
+
+- Existing gpu-burn options remain unchanged.
+- `--burn-util-file` is additive and used by the Python `burner` GPU backend.

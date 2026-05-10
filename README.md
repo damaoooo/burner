@@ -33,6 +33,8 @@ Build GPU burn support:
 bash scripts/build_gpu_burn.sh
 ```
 
+Run the build scripts again after pulling or editing third-party source changes; `burner` uses the compiled binaries under `third_party/`.
+
 Run a short CPU burn using the sample sine curve:
 
 ```bash
@@ -68,7 +70,7 @@ Options:
 | Option | Meaning |
 | --- | --- |
 | `--cpu` | Enable CPU burn through patched `lookbusy`. |
-| `--gpu` | Enable GPU burn through `gpu_burn` duty-cycle control. |
+| `--gpu` | Enable GPU burn through patched `gpu_burn` live utilization control. |
 | `-f`, `--file` | Input curve CSV. |
 | `-t`, `--time` | Total run duration, such as `20s`, `30m`, `1h`. |
 | `-p`, `--period` | Duration of one full curve period. |

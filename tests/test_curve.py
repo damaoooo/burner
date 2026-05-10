@@ -1,12 +1,7 @@
-from pathlib import Path
-
 import pytest
 
 from warpper.curve import CurveFormatError, LoadCurve
 from warpper.timeutil import parse_duration
-
-
-FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def write_curve(tmp_path, text):
@@ -47,8 +42,10 @@ def test_load_curve_rejects_invalid_rows(tmp_path, content, message):
         LoadCurve.from_csv(path)
 
 
-def test_curve_linear_interpolation():
-    curve = LoadCurve.from_csv(FIXTURES / "sine.csv")
+def test_curve_linear_interpolation(tmp_path):
+    curve = LoadCurve.from_csv(
+        write_curve(tmp_path, "0,0.5\n0.25,1\n0.5,0.5\n0.75,0\n1,0.5\n")
+    )
 
     assert curve.value_at_fraction(0.0) == pytest.approx(0.5)
     assert curve.value_at_fraction(0.125) == pytest.approx(0.75)
@@ -57,8 +54,10 @@ def test_curve_linear_interpolation():
     assert curve.value_at_fraction(1.0) == pytest.approx(0.5)
 
 
-def test_curve_periodic_elapsed_wrap():
-    curve = LoadCurve.from_csv(FIXTURES / "sine.csv")
+def test_curve_periodic_elapsed_wrap(tmp_path):
+    curve = LoadCurve.from_csv(
+        write_curve(tmp_path, "0,0.5\n0.25,1\n0.5,0.5\n0.75,0\n1,0.5\n")
+    )
 
     assert curve.value_at_elapsed(2.5, period=2.0) == pytest.approx(1.0)
 
