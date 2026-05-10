@@ -1,0 +1,54 @@
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local Python environments
+.venv/
+venv/
+env/
+.env
+.env.*
+
+# Runtime logs and captured output
+*.log
+*.out
+*.err
+
+# Recorded power / schedule CSV output
+*.csv
+!tests/fixtures/*.csv
+
+# Native build artifacts
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+
+# autotools / make build outputs
+.deps/
+Makefile
+config.h
+config.log
+config.status
+stamp-h1
+
+# Project third-party binaries and generated CUDA artifacts
+third_party/lookbusy/lookbusy
+third_party/lookbusy/lb.o
+third_party/gpu-burn/gpu_burn
+third_party/gpu-burn/gpu_burn-drv.o
+third_party/gpu-burn/compare.ptx
+
+# Editor / OS noise
+.DS_Store
+*.swp
+*.swo
+*~
