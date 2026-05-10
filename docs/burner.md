@@ -1,0 +1,60 @@
+# burner
+
+`burner` reads a normalized CSV curve and controls CPU and/or GPU burn intensity over time.
+
+## Usage
+
+```bash
+./burner [--cpu] [--gpu] -f <curve.csv> -t <duration> -p <period> [-s <start_time>]
+```
+
+Examples:
+
+```bash
+./burner --cpu -f tests/fixtures/sine.csv -t 30m -p 60s
+./burner --cpu --gpu -f tests/fixtures/sine.csv -t 1h -p 5m
+./burner --cpu --gpu -f tests/fixtures/sine.csv -t 1h -p 5m -s "2026-05-10T12:00:00Z"
+```
+
+## Curve CSV
+
+The curve file has no header and exactly two columns:
+
+```csv
+0.0,0.5
+0.25,1.0
+0.5,0.5
+0.75,0.0
+1.0,0.5
+```
+
+- First column: normalized period position `x`, from `0` to `1`.
+- Second column: burn intensity `y`; values below `0` are clamped to `0`, values above `1` are clamped to `1`.
+- Points must be strictly increasing by `x`.
+- Values between points use linear interpolation.
+
+## Timing
+
+- `-t/--time` is the total run duration.
+- `-p/--period` is one full curve period.
+- Supported duration units are `s`, `m`, and `h`, for example `20s`, `30m`, `1h`.
+- The default scheduler tick is `0.1s`.
+
+## Backends
+
+- CPU uses the patched `third_party/lookbusy/lookbusy`.
+- GPU uses `third_party/gpu-burn/gpu_burn` with duty-cycle pause/resume control.
+
+Build CPU support:
+
+```bash
+bash scripts/build_lookbusy.sh
+```
+
+Build GPU support:
+
+```bash
+bash scripts/build_gpu_burn.sh
+```
+
+If a required backend binary is missing, `burner` exits with a clear error.
