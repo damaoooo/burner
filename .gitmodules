@@ -1,0 +1,6 @@
+[submodule "third_party/gpu-burn"]
+	path = third_party/gpu-burn
+	url = https://github.com/damaoooo/gpu-burn.git
+[submodule "third_party/lookbusy"]
+	path = third_party/lookbusy
+	url = https://github.com/damaoooo/lookbusy.git
