@@ -36,7 +36,8 @@ The curve file has no header and exactly two columns:
 ## Timing
 
 - `-t/--time` is the total run duration.
-- `-p/--period` is one full curve period.
+- `-p/--period` is one full curve period and supports decimal values, for example `0.5s`, `1.25m`.
+- `-t/--time` still uses integer duration values.
 - Supported duration units are `s`, `m`, and `h`, for example `20s`, `30m`, `1h`.
 - The default scheduler tick is `0.1s`.
 
@@ -44,6 +45,7 @@ The curve file has no header and exactly two columns:
 
 - CPU uses the patched `third_party/lookbusy/lookbusy`.
 - GPU uses patched `third_party/gpu-burn/gpu_burn` with `--burn-util-file` so the CUDA work loop reads the live target utilization and throttles kernel submission internally.
+- GPU burn targets all detected CUDA GPUs by default. `burner` does not pass `-i`, so gpu-burn forks one worker per GPU and all workers read the same utilization control file.
 
 Build CPU support:
 

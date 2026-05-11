@@ -22,6 +22,12 @@ def sine_curve_path(tmp_path):
     return path
 
 
+def linear_curve_path(tmp_path):
+    path = tmp_path / "linear.csv"
+    path.write_text("0.0,0.0\n1.0,1.0\n", encoding="utf-8")
+    return path
+
+
 def test_generate_schedule_uses_curve_and_tick(tmp_path):
     curve = LoadCurve.from_csv(sine_curve_path(tmp_path))
 
@@ -101,7 +107,36 @@ def test_burner_cli_mock_backend_writes_schedule_log(tmp_path):
     ]
 
 
-def test_gpu_backend_starts_from_gpu_burn_directory_with_util_file(tmp_path, monkeypatch):
+def test_burner_cli_accepts_decimal_period(tmp_path):
+    log_path = tmp_path / "schedule.csv"
+
+    result = run_burner_cli(
+        "--cpu",
+        "-f",
+        str(linear_curve_path(tmp_path)),
+        "-t",
+        "1s",
+        "-p",
+        "0.5s",
+        "--tick",
+        "0.25",
+        "--mock-backend",
+        "--no-sleep",
+        "--log-schedule",
+        str(log_path),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert log_path.read_text(encoding="utf-8").splitlines() == [
+        "backend,elapsed,intensity",
+        "cpu,0.000000,0.000000",
+        "cpu,0.250000,0.500000",
+        "cpu,0.500000,0.000000",
+        "cpu,0.750000,0.500000",
+    ]
+
+
+def test_gpu_backend_starts_all_gpus_with_shared_util_file(tmp_path, monkeypatch):
     binary = tmp_path / "gpu_burn"
     binary.write_text("#!/bin/sh\n", encoding="utf-8")
     calls = {}
@@ -129,6 +164,7 @@ def test_gpu_backend_starts_from_gpu_burn_directory_with_util_file(tmp_path, mon
     assert calls["command"][:5] == [str(binary), "-m", "900", "-stts", "1"]
     assert calls["command"][5] == "--burn-util-file"
     assert calls["command"][7] == "86400"
+    assert "-i" not in calls["command"]
     assert calls["kwargs"]["cwd"] == str(tmp_path)
 
 

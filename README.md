@@ -73,10 +73,12 @@ Options:
 | `--gpu` | Enable GPU burn through patched `gpu_burn` live utilization control. |
 | `-f`, `--file` | Input curve CSV. |
 | `-t`, `--time` | Total run duration, such as `20s`, `30m`, `1h`. |
-| `-p`, `--period` | Duration of one full curve period. |
+| `-p`, `--period` | Duration of one full curve period; decimals are allowed, such as `0.5s`. |
 | `-s`, `--start` | Optional UTC start time, such as `2026-05-10T12:00:00Z`. |
 
 At least one of `--cpu` or `--gpu` is required. If both are provided, CPU and GPU are controlled together using the same curve.
+
+When `--gpu` is used, all CUDA GPUs are burned by default. The same curve target is written to one shared control file, so an intensity of `1.0` means every detected GPU is driven toward 100% burn.
 
 ## Curve CSV Format
 

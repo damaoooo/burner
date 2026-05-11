@@ -1,7 +1,7 @@
 import pytest
 
 from warpper.curve import CurveFormatError, LoadCurve
-from warpper.timeutil import parse_duration
+from warpper.timeutil import parse_duration, parse_period_duration
 
 
 def write_curve(tmp_path, text):
@@ -74,3 +74,17 @@ def test_parse_duration(text, seconds):
 def test_parse_duration_rejects_invalid_values(text):
     with pytest.raises(ValueError):
         parse_duration(text)
+
+
+@pytest.mark.parametrize(
+    ("text", "seconds"),
+    [("0.5s", 0.5), ("1.25m", 75.0), (".5h", 1800.0), ("2s", 2.0)],
+)
+def test_parse_period_duration_accepts_decimal_values(text, seconds):
+    assert parse_period_duration(text) == pytest.approx(seconds)
+
+
+@pytest.mark.parametrize("text", ["1", "0s", "0.0s", "-1s", "1h30m", "abc"])
+def test_parse_period_duration_rejects_invalid_values(text):
+    with pytest.raises(ValueError):
+        parse_period_duration(text)

@@ -60,9 +60,9 @@
 
 时长格式：
 
-- 支持 `s`、`m`、`h` 后缀。
-- 示例：`20s`、`30m`、`1h`。
-- 不支持无单位、负数、小数、组合格式如 `1h30m`。
+- `-t` 支持整数加 `s`、`m`、`h` 后缀，例如 `20s`、`30m`、`1h`。
+- `-p` 支持正数小数加 `s`、`m`、`h` 后缀，例如 `0.5s`、`1.25m`。
+- 不支持无单位、负数、零值、组合格式如 `1h30m`。
 
 ### 3.2 曲线 CSV 格式
 
@@ -135,14 +135,16 @@ CPU burn 从 `third_party/lookbusy` 实现。
 
 ### 3.5 GPU burn
 
-GPU burn 基于 `third_party/gpu-burn`。
+GPU burn 基于 patched `third_party/gpu-burn`。
 
-第一版采用占空比调度，不深改 CUDA kernel：
+GPU 控制采用 `--burn-util-file` 内部 throttle：
 
-- 在短调度窗口内，根据目标强度启动或停止 `gpu_burn`。
-- 目标强度越高，`gpu_burn` 在窗口内运行时间越长。
-- 强度 `0` 时不运行 `gpu_burn`。
-- 强度 `1` 时持续运行 `gpu_burn`。
+- `burner` 将当前目标强度写入共享控制文件。
+- `gpu_burn` 的 CUDA work loop 读取该文件并调节 kernel 提交节奏。
+- 强度 `0` 时不提交 GPU work。
+- 强度 `1` 时持续提交 GPU work。
+- 当机器存在多个 CUDA GPU 时，默认控制所有 GPU；所有 GPU worker 读取同一个目标强度文件。
+- 多 GPU 场景下，强度 `1` 表示每块被检测到的 GPU 都执行 100% burn，强度 `0.5` 表示每块 GPU 都按同一目标执行约 50% burn。
 
 错误处理：
 

@@ -15,7 +15,7 @@ from .burner_backends import (
 )
 from .burner_core import run_schedule, write_events_log
 from .curve import CurveFormatError, LoadCurve
-from .timeutil import parse_duration, parse_utc_start
+from .timeutil import parse_duration, parse_period_duration, parse_utc_start
 
 
 DEFAULT_TICK = 0.1
@@ -45,7 +45,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         duration = parse_duration(args.time)
-        period = parse_duration(args.period)
+        period = parse_period_duration(args.period)
         if args.tick <= 0:
             raise ValueError("tick must be greater than 0")
         curve = LoadCurve.from_csv(args.file)
@@ -106,4 +106,3 @@ def _install_signal_handlers() -> None:
 
     signal.signal(signal.SIGINT, raise_keyboard_interrupt)
     signal.signal(signal.SIGTERM, raise_keyboard_interrupt)
-

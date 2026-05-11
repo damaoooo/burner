@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 
 _DURATION_RE = re.compile(r"^([1-9][0-9]*)([smh])$")
+_PERIOD_RE = re.compile(r"^([0-9]+(?:\.[0-9]+)?|\.[0-9]+)([smh])$")
 
 
 def parse_duration(value: str) -> float:
@@ -18,6 +19,23 @@ def parse_duration(value: str) -> float:
     return float(amount * multiplier)
 
 
+def parse_period_duration(value: str) -> float:
+    match = _PERIOD_RE.match(value.strip())
+    if not match:
+        raise ValueError(
+            f"invalid period '{value}'; expected positive NUMBER[s|m|h]"
+        )
+
+    amount = float(match.group(1))
+    if amount <= 0:
+        raise ValueError(
+            f"invalid period '{value}'; expected positive NUMBER[s|m|h]"
+        )
+    unit = match.group(2)
+    multiplier = {"s": 1, "m": 60, "h": 3600}[unit]
+    return amount * multiplier
+
+
 def parse_utc_start(value: str) -> datetime:
     if not value.endswith("Z"):
         raise ValueError("start time must be UTC and end with 'Z'")
@@ -26,4 +44,3 @@ def parse_utc_start(value: str) -> datetime:
     except ValueError as exc:
         raise ValueError("start time must use ISO format like 2026-05-10T12:00:00Z") from exc
     return parsed.astimezone(timezone.utc)
-
