@@ -14,7 +14,7 @@ Change:
 
 - Added `--cpu-util-file=PATH`.
 - CPU spinner processes read a percentage from this file on each control loop.
-- The external control loop uses a `10ms` window to track finer input curves.
+- The external control loop uses a `100ms` window for externally supplied utilization targets.
 - Values below `0` are treated as `0`; values above `100` are treated as `100`.
 - If the file cannot be read or parsed, lookbusy falls back to its configured utilization.
 
@@ -40,7 +40,7 @@ Change:
 - `0` means do not submit GPU work.
 - `100` means run continuously.
 - Intermediate values throttle inside the CUDA work loop by measuring completed work time and sleeping between iterations.
-- Sleep chunks are capped at `10ms` so utilization changes are noticed promptly.
+- Sleep chunks are capped at `100ms` so utilization changes are noticed periodically.
 - The Python backend starts gpu-burn with a smaller default memory window so each control cycle has finer granularity.
 - Invalid or unreadable control file values are treated as `0` when the option is used.
 

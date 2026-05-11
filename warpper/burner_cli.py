@@ -18,7 +18,7 @@ from .curve import CurveFormatError, LoadCurve
 from .timeutil import parse_duration, parse_period_duration, parse_utc_start
 
 
-DEFAULT_TICK = 0.01
+DEFAULT_TICK = 0.1
 
 
 def build_parser() -> argparse.ArgumentParser:

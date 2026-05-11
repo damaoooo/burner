@@ -40,13 +40,13 @@ def test_generate_schedule_uses_curve_and_tick(tmp_path):
     ]
 
 
-def test_burner_cli_default_tick_is_10ms():
+def test_burner_cli_default_tick_is_100ms():
     args = build_parser().parse_args(
         ["--cpu", "-f", "curve.csv", "-t", "1s", "-p", "1s"]
     )
 
-    assert DEFAULT_TICK == pytest.approx(0.01)
-    assert args.tick == pytest.approx(0.01)
+    assert DEFAULT_TICK == pytest.approx(0.1)
+    assert args.tick == pytest.approx(0.1)
 
 
 def test_run_schedule_updates_all_backends_and_stops(tmp_path):
