@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 import warpper.burner_backends as burner_backends
+from warpper.burner_cli import DEFAULT_TICK, build_parser
 from warpper.burner_core import generate_schedule, run_schedule
 from warpper.burner_backends import DutyCycleGpuBackend, MockBurnBackend
 from warpper.curve import LoadCurve
@@ -37,6 +38,15 @@ def test_generate_schedule_uses_curve_and_tick(tmp_path):
         (0.0, pytest.approx(0.5)),
         (0.25, pytest.approx(1.0)),
     ]
+
+
+def test_burner_cli_default_tick_is_10ms():
+    args = build_parser().parse_args(
+        ["--cpu", "-f", "curve.csv", "-t", "1s", "-p", "1s"]
+    )
+
+    assert DEFAULT_TICK == pytest.approx(0.01)
+    assert args.tick == pytest.approx(0.01)
 
 
 def test_run_schedule_updates_all_backends_and_stops(tmp_path):
