@@ -1,0 +1,40 @@
+{
+  "machines": [
+    {
+      "id": "node-1",
+      "name": "1x4090",
+      "host": "10.76.106.47",
+      "port": 22,
+      "username": "damaoooo",
+      "identity_file": "~/.ssh/no_pass",
+      "workdir": "/home/damaoooo/Downloads/burner",
+      "cpu_tdp": 125,
+      "gpu_tdp": 450,
+      "conda_env": "regraphv2"
+    },
+    {
+      "id": "node-2",
+      "name": "2x4090",
+      "host": "10.76.106.52",
+      "port": 22,
+      "username": "damaoooo",
+      "identity_file": "~/.ssh/no_pass",
+      "workdir": "/home/damaoooo/Downloads/burner",
+      "cpu_tdp": 125,
+      "gpu_tdp": 450,
+      "conda_env": "regraphv2"
+    },
+    {
+      "id": "node-3",
+      "name": "1x5090",
+      "host": "10.76.106.91",
+      "port": 22,
+      "username": "damaoooo",
+      "identity_file": "~/.ssh/no_pass",
+      "workdir": "/home/damaoooo/playground/burner",
+      "cpu_tdp": 170,
+      "gpu_tdp": 575,
+      "conda_env": "ReLL"
+    }
+  ]
+}

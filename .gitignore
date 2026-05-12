@@ -15,6 +15,11 @@ env/
 .env
 .env.*
 
+# Frontend dependencies/build output
+node_modules/
+dist/
+*.tsbuildinfo
+
 # Runtime logs and captured output
 *.log
 *.out
