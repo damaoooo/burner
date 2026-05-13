@@ -2,9 +2,9 @@
 set -euo pipefail
 
 UI_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-HOST="${HOST:-0.0.0.0}"
-PORT="${PORT:-8000}"
-CONDA_ENV="${CONDA_ENV:-ReLL}"
+UI_HOST="${BURNER_UI_HOST:-0.0.0.0}"
+UI_PORT="${BURNER_UI_PORT:-8000}"
+CONDA_ENV="${BURNER_CONDA_ENV:-ReLL}"
 
 cd "${UI_ROOT}/backend"
 if ! conda run -n "${CONDA_ENV}" python -c "import asyncssh, fastapi, pydantic, uvicorn" >/dev/null 2>&1
@@ -21,4 +21,4 @@ npm run build
 
 cd "${UI_ROOT}/backend"
 exec conda run --no-capture-output -n "${CONDA_ENV}" \
-  python -m uvicorn main:app --host "${HOST}" --port "${PORT}"
+  python -m uvicorn main:app --host "${UI_HOST}" --port "${UI_PORT}"

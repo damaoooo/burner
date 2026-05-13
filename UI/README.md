@@ -19,7 +19,7 @@ The frontend, `/api/*`, and `/ws` are all served by the same FastAPI process.
 Optional environment variables:
 
 ```bash
-PORT=9000 HOST=127.0.0.1 CONDA_ENV=ReLL bash UI/run.sh
+BURNER_UI_PORT=9000 BURNER_UI_HOST=127.0.0.1 BURNER_CONDA_ENV=ReLL bash UI/run.sh
 ```
 
 ## Development Mode
