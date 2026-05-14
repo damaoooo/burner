@@ -30,7 +30,7 @@ burner/UI/
 │   ├── machine_info.py         # 远程查询 CPU 型号 / GPU 信息
 │   ├── burn_controller.py      # 发起 burn、PID 跟踪、kill、同步策略
 │   ├── file_transfer.py        # SCP 波形 CSV 到远端
-│   ├── update_controller.py    # git pull --recurse-submodules + build
+│   ├── update_controller.py    # submodule-safe reset/pull + build
 │   ├── sampling_controller.py  # 采样时间远端同步 + rebuild
 │   ├── waveform_store.py       # 列出/读取/保存本地波形 CSV
 │   └── requirements.txt
@@ -273,7 +273,12 @@ async def run_update(machine_id: str, has_gpu: bool):
 
     commands = [
         f"cd {workdir}",
+        "git reset --hard HEAD",
+        "git clean -fd",
+        "git submodule foreach --recursive 'git reset --hard HEAD && git clean -fd'",
         "git pull --recurse-submodules",
+        "git submodule sync --recursive",
+        "git submodule update --init --recursive --force",
         "bash scripts/build_lookbusy.sh",
     ]
     if has_gpu:
@@ -450,7 +455,7 @@ GET  /api/burn/status
 POST /api/update/{id}
 ```
 若该机器正在 burn，返回 `409 Conflict: {"detail": "Machine is currently burning"}`。
-否则在远端执行 git pull + build，输出通过 WebSocket 流式推送。
+否则在远端执行 submodule-safe reset/pull/update + build，输出通过 WebSocket 流式推送。该流程会清理远端仓库和 submodule 中未提交的本地改动，避免 patched third-party 源码阻塞 checkout。
 
 ### 采样时间应用
 

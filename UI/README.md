@@ -63,3 +63,19 @@ BURNER_CONTROL_INTERVAL_MS=<value> bash scripts/build_gpu_burn.sh  # only when G
 ```
 
 Burn and update actions are blocked while this rebuild is running. A sampling time is considered applied only after every target machine rebuilds successfully.
+
+## Update Flow
+
+The per-machine `Update` action uses the same submodule-safe repository preparation before building:
+
+```bash
+cd <remote workdir>
+git reset --hard HEAD
+git clean -fd
+git submodule foreach --recursive 'git reset --hard HEAD && git clean -fd'
+git pull --recurse-submodules
+git submodule sync --recursive
+git submodule update --init --recursive --force
+```
+
+It then rebuilds CPU support and, when GPU hardware is detected, GPU support.

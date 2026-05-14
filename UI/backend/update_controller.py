@@ -3,14 +3,25 @@ from __future__ import annotations
 import asyncio
 import shlex
 from collections.abc import Awaitable, Callable
+from typing import Protocol
 
-from burn_controller import BurnController
-from config import ConfigStore
 from remote_shell import conda_run_command
-from ssh_manager import SSHManager
+from sampling_controller import reset_command
 
 
 Broadcast = Callable[[dict[str, object]], Awaitable[None]]
+
+
+class ConfigLike(Protocol):
+    def get_machine(self, machine_id: str): ...
+
+
+class SSHLike(Protocol):
+    def get_connection(self, machine_id: str): ...
+
+
+class BurnLike(Protocol):
+    def has_jobs(self, machine_id: str) -> bool: ...
 
 
 class UpdateConflictError(RuntimeError):
@@ -20,9 +31,9 @@ class UpdateConflictError(RuntimeError):
 class UpdateController:
     def __init__(
         self,
-        config: ConfigStore,
-        ssh: SSHManager,
-        burn: BurnController,
+        config: ConfigLike,
+        ssh: SSHLike,
+        burn: BurnLike,
         broadcast: Broadcast,
     ):
         self._config = config
@@ -47,7 +58,10 @@ class UpdateController:
         machine = self._config.get_machine(machine_id)
         commands = [
             f"cd {shlex.quote(machine.workdir)}",
+            reset_command(),
             "git pull --recurse-submodules",
+            "git submodule sync --recursive",
+            "git submodule update --init --recursive --force",
             "bash scripts/build_lookbusy.sh",
         ]
         if has_gpu:

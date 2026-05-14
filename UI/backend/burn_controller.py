@@ -8,7 +8,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from config import ConfigStore
@@ -22,6 +22,7 @@ _DURATION_RE = re.compile(r"^([1-9][0-9]*)([smh])$")
 _PERIOD_RE = re.compile(r"^([0-9]+(?:\.[0-9]+)?|\.[0-9]+)([smh])$")
 
 Broadcast = Callable[[dict[str, object]], Awaitable[None]]
+UTC = timezone.utc
 
 
 class BurnError(RuntimeError):
