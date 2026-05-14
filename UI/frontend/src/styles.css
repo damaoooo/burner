@@ -837,10 +837,10 @@ button:disabled {
 
 .sampling-progress-panel {
   display: grid;
-  gap: 8px;
+  gap: 10px;
   border: 1px solid color-mix(in srgb, var(--mode-accent) 28%, var(--border));
   border-radius: 8px;
-  padding: 10px;
+  padding: 12px;
   background: var(--panel-strong);
 }
 
@@ -862,13 +862,172 @@ button:disabled {
   font-size: 12px;
 }
 
-.compact-log {
-  min-height: 92px;
-  max-height: 150px;
+.sampling-summary-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.sampling-summary-row span {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--panel-raised);
+  color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 900;
+  text-align: center;
+}
+
+.sampling-machine-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 10px;
+}
+
+.sampling-machine-card {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--panel-raised) 94%, transparent), var(--panel-strong)),
+    var(--panel-strong);
+  box-shadow: var(--shadow-soft);
+}
+
+.sampling-machine-card.success {
+  border-color: color-mix(in srgb, var(--success) 56%, var(--border));
+}
+
+.sampling-machine-card.failed {
+  border-color: color-mix(in srgb, var(--danger) 60%, var(--border));
+}
+
+.sampling-machine-card.running {
+  border-color: color-mix(in srgb, var(--mode-accent) 56%, var(--border));
+}
+
+.sampling-machine-head {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.sampling-machine-head div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.sampling-machine-head strong {
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+
+.sampling-machine-head span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.sampling-status-badge {
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: var(--panel);
+  color: var(--text-soft);
+  font-size: 11px;
+  font-weight: 950;
+}
+
+.sampling-status-badge.success {
+  border-color: color-mix(in srgb, var(--success) 58%, transparent);
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.sampling-status-badge.failed {
+  border-color: color-mix(in srgb, var(--danger) 58%, transparent);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.sampling-status-badge.running {
+  border-color: color-mix(in srgb, var(--mode-accent) 58%, transparent);
+  background: var(--mode-accent-soft);
+  color: var(--mode-accent-strong);
+}
+
+.sampling-machine-progress {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 42px;
+  gap: 8px;
+  align-items: center;
+}
+
+.sampling-machine-progress span {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 900;
+  text-align: right;
+}
+
+.sampling-machine-step {
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid color-mix(in srgb, var(--mode-accent) 30%, var(--border));
+  border-radius: 6px;
+  padding: 5px 8px;
+  background: color-mix(in srgb, var(--mode-accent-soft) 72%, transparent);
+  color: var(--mode-accent-strong);
+  font-size: 12px;
+  font-weight: 900;
+  overflow-wrap: anywhere;
+}
+
+.sampling-machine-message {
+  border: 1px solid color-mix(in srgb, var(--danger) 50%, var(--border));
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.sampling-machine-log {
+  min-height: 104px;
+  max-height: 190px;
+  margin: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 9px;
+  background: #050813;
+  color: #b8f7d1;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.sampling-machine-empty {
+  min-height: 42px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 .sampling-modal .sampling-progress-panel {
-  max-height: min(62vh, 520px);
+  max-height: min(70vh, 680px);
+  overflow: auto;
 }
 
 .sampling-confirm-grid {

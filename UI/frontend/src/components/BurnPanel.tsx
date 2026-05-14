@@ -274,7 +274,9 @@ function SamplingApplyModal({
           <>
             <h3>{success ? "Sampling Time Applied" : "Sampling Rebuild Failed"}</h3>
             <p className={`modal-message ${success ? "success-text" : "error-text"}`}>
-              {success ? `All target machines rebuilt with ${samplingMs} ms sampling.` : message || "At least one remote rebuild failed."}
+              {success
+                ? `All target machines rebuilt with ${samplingMs} ms sampling.`
+                : message || "One or more machines failed. Review the per-machine status below."}
             </p>
             <SamplingBuildProgress machines={machines} />
             <div className="modal-actions">
@@ -291,44 +293,97 @@ function SamplingApplyModal({
 
 function SamplingBuildProgress({ machines }: { machines: Record<string, MachineState> }) {
   const { state } = useAppState();
-  const statuses = Object.entries(state.samplingBuild.machines);
-  if (!state.samplingBuild.running && statuses.length === 0) {
+  const machineIds = [
+    ...state.samplingBuild.targetMachineIds,
+    ...Object.keys(state.samplingBuild.machines).filter(
+      (machineId) => !state.samplingBuild.targetMachineIds.includes(machineId)
+    )
+  ];
+  if (!state.samplingBuild.running && machineIds.length === 0) {
     return null;
   }
 
+  const rows = machineIds.map((machineId) => ({
+    machineId,
+    status: state.samplingBuild.machines[machineId] ?? {
+      status: "queued" as const,
+      step: "queued",
+      progress: 0,
+      logs: []
+    }
+  }));
   const average =
-    statuses.length === 0
+    rows.length === 0
       ? 0
-      : statuses.reduce((total, [, status]) => total + status.progress, 0) / statuses.length;
-  const current =
-    statuses.find(([, status]) => status.status === "running") ??
-    statuses.find(([, status]) => status.status === "queued") ??
-    statuses[0];
-  const logs = statuses.flatMap(([machineId, status]) =>
-    status.logs.map((line) => `${machineName(machineId, machines)}: ${line}`)
-  );
+      : rows.reduce((total, item) => total + item.status.progress, 0) / rows.length;
+  const successCount = rows.filter((item) => item.status.status === "success").length;
+  const failedCount = rows.filter((item) => item.status.status === "failed").length;
+  const runningCount = rows.filter((item) => item.status.status === "running").length;
+  const queuedCount = rows.filter((item) => item.status.status === "queued").length;
 
   return (
     <div className="sampling-progress-panel">
       <div className="sampling-progress-header">
-        <span>{state.samplingBuild.running ? "Rebuild in progress" : "Last rebuild"}</span>
+        <span>{state.samplingBuild.running ? "Rebuild in progress" : "Rebuild result"}</span>
         <strong>{Math.round(average * 100)}%</strong>
       </div>
       <div className="progress-track" aria-label="sampling rebuild progress">
         <div className="progress-fill" style={{ width: `${average * 100}%` }} />
       </div>
-      {current && (
-        <div className="sampling-current">
-          {machineName(current[0], machines)} · {current[1].step}
-        </div>
+      <div className="sampling-summary-row">
+        <span>{successCount} success</span>
+        <span>{failedCount} failed</span>
+        <span>{runningCount} running</span>
+        <span>{queuedCount} queued</span>
+      </div>
+      <div className="sampling-machine-grid">
+        {rows.map(({ machineId, status }) => (
+          <div className={`sampling-machine-card ${status.status}`} key={machineId}>
+            <div className="sampling-machine-head">
+              <div>
+                <strong>{machineName(machineId, machines)}</strong>
+                <span>{machineId}</span>
+              </div>
+              <span className={`sampling-status-badge ${status.status}`}>{statusLabel(status.status)}</span>
+            </div>
+            <div className="sampling-machine-progress">
+              <div className="progress-track" aria-label={`${machineName(machineId, machines)} progress`}>
+                <div className="progress-fill" style={{ width: `${status.progress * 100}%` }} />
+              </div>
+              <span>{Math.round(status.progress * 100)}%</span>
+            </div>
+            <div className="sampling-machine-step">{status.step}</div>
+            {status.message && <div className="sampling-machine-message">{status.message}</div>}
+            {status.logs.length > 0 ? (
+              <pre className="sampling-machine-log">{status.logs.slice(-10).join("\n")}</pre>
+            ) : (
+              <div className="sampling-machine-empty">Waiting for output.</div>
+            )}
+          </div>
+        ))}
+      </div>
+      {state.samplingBuild.message && failedCount === 0 && (
+        <div className="sampling-machine-message">{state.samplingBuild.message}</div>
       )}
-      {logs.length > 0 && <pre className="log-box compact-log">{logs.slice(-40).join("\n")}</pre>}
     </div>
   );
 }
 
 function machineName(machineId: string, machines: Record<string, MachineState>): string {
   return machines[machineId]?.config.name ?? machineId;
+}
+
+function statusLabel(status: string): string {
+  if (status === "success") {
+    return "Success";
+  }
+  if (status === "failed") {
+    return "Failed";
+  }
+  if (status === "running") {
+    return "Running";
+  }
+  return "Queued";
 }
 
 function parseSamplingMs(value: string): number | undefined {
