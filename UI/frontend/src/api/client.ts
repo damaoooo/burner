@@ -89,6 +89,13 @@ export async function runUpdate(id: string): Promise<void> {
   await http.post(`/update/${encodeURIComponent(id)}`);
 }
 
+export async function applySamplingTime(samplingMs: number, machineIds: string[]): Promise<void> {
+  await http.post("/sampling/apply", {
+    sampling_ms: samplingMs,
+    machine_ids: machineIds
+  });
+}
+
 export function extractErrorMessage(error: unknown): string {
   if (axios.isAxiosError(error)) {
     const detail = error.response?.data?.detail;

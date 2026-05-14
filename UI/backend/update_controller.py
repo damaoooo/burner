@@ -74,3 +74,8 @@ class UpdateController:
             await self._broadcast(
                 {"event": "update_log", "id": machine_id, "line": line.rstrip()}
             )
+
+    def is_running(self, machine_id: str | None = None) -> bool:
+        if machine_id is None:
+            return bool(self._running)
+        return machine_id in self._running

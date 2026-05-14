@@ -25,12 +25,16 @@ Build CPU burn support:
 
 ```bash
 bash scripts/build_lookbusy.sh
+# or rebuild with a different backend control interval:
+BURNER_CONTROL_INTERVAL_MS=250 bash scripts/build_lookbusy.sh
 ```
 
 Build GPU burn support:
 
 ```bash
 bash scripts/build_gpu_burn.sh
+# or rebuild with a different backend control interval:
+BURNER_CONTROL_INTERVAL_MS=250 bash scripts/build_gpu_burn.sh
 ```
 
 Run the build scripts again after pulling or editing third-party source changes; `burner` uses the compiled binaries under `third_party/`.
@@ -75,13 +79,13 @@ Options:
 | `-t`, `--time` | Total run duration, such as `20s`, `30m`, `1h`. |
 | `-p`, `--period` | Duration of one full curve period; decimals are allowed, such as `0.5s`. |
 | `-s`, `--start` | Optional UTC start time, such as `2026-05-10T12:00:00Z`. |
-| `--tick` | Scheduler update interval in seconds. Defaults to `0.1`. |
+| `--tick` | Scheduler update interval in seconds. Defaults to `0.1`. The WebUI passes the applied sampling time as this value. |
 
 At least one of `--cpu` or `--gpu` is required. If both are provided, CPU and GPU are controlled together using the same curve.
 
 When `--gpu` is used, all CUDA GPUs are burned by default. The same curve target is written to one shared control file, so an intensity of `1.0` means every detected GPU is driven toward 100% burn.
 
-The CPU and GPU patched backends also check their utilization control files at roughly `100ms` granularity, though the effective GPU response still depends on CUDA work-loop latency.
+The CPU and GPU patched backends check their utilization control files at `100ms` granularity by default. Rebuild with `BURNER_CONTROL_INTERVAL_MS=<10-1000>` to change that backend control interval; the WebUI sampling-time apply flow does this on connected remote machines.
 
 ## Curve CSV Format
 

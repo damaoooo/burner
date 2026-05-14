@@ -40,25 +40,28 @@ The curve file has no header and exactly two columns:
 - `-t/--time` still uses integer duration values.
 - Supported duration units are `s`, `m`, and `h`, for example `20s`, `30m`, `1h`.
 - The default scheduler tick is `0.1s`.
-- `--tick` controls how often `burner` recalculates and writes the target intensity.
+- `--tick` controls how often `burner` recalculates and writes the target intensity. The WebUI sends the currently applied sampling time as this value.
 
 ## Backends
 
 - CPU uses the patched `third_party/lookbusy/lookbusy`.
 - GPU uses patched `third_party/gpu-burn/gpu_burn` with `--burn-util-file` so the CUDA work loop reads the live target utilization and throttles kernel submission internally.
 - GPU burn targets all detected CUDA GPUs by default. `burner` does not pass `-i`, so gpu-burn forks one worker per GPU and all workers read the same utilization control file.
-- The patched CPU and GPU backends use `100ms` control checks for externally supplied utilization targets.
+- The patched CPU and GPU backends use `100ms` control checks for externally supplied utilization targets by default.
+- Rebuild the backends with `BURNER_CONTROL_INTERVAL_MS=<10-1000>` to change the compiled backend control interval in milliseconds.
 
 Build CPU support:
 
 ```bash
 bash scripts/build_lookbusy.sh
+BURNER_CONTROL_INTERVAL_MS=250 bash scripts/build_lookbusy.sh
 ```
 
 Build GPU support:
 
 ```bash
 bash scripts/build_gpu_burn.sh
+BURNER_CONTROL_INTERVAL_MS=250 bash scripts/build_gpu_burn.sh
 ```
 
 If a required backend binary is missing, `burner` exits with a clear error.

@@ -31,6 +31,7 @@ burner/UI/
 │   ├── burn_controller.py      # 发起 burn、PID 跟踪、kill、同步策略
 │   ├── file_transfer.py        # SCP 波形 CSV 到远端
 │   ├── update_controller.py    # git pull --recurse-submodules + build
+│   ├── sampling_controller.py  # 采样时间远端同步 + rebuild
 │   ├── waveform_store.py       # 列出/读取/保存本地波形 CSV
 │   └── requirements.txt
 │
@@ -381,6 +382,7 @@ POST /api/burn/start
   "start_time_utc": "2026-05-13T10:00:00Z",
   "duration": "60s",
   "period": "10s",
+  "tick_seconds": 0.1,
   "machines": [
     {
       "id": "node-1",
@@ -405,6 +407,7 @@ POST /api/burn/start
 - `start_time_utc`：仅 `sync_mode=scheduled` 时必填，UTC ISO 格式，例如 `"2026-05-13T10:00:00Z"`
 - `duration`：格式同 burner `-t`，如 `"60s"`、`"2m"`
 - `period`：格式同 burner `-p`，如 `"10s"`、`"1.5s"`
+- `tick_seconds`：burner 调度 tick，前端使用已应用采样时间换算出的秒值
 - `delay_seconds`：支持小数秒；`sync_mode=delayed` 或 `sync_mode=scheduled` 时生效，后端生成毫秒级 `--start` 时间
 - `waveform_name`：各机器可独立指定；若前端未开启独立波形模式，所有机器填同一个名字
 
@@ -449,6 +452,22 @@ POST /api/update/{id}
 若该机器正在 burn，返回 `409 Conflict: {"detail": "Machine is currently burning"}`。
 否则在远端执行 git pull + build，输出通过 WebSocket 流式推送。
 
+### 采样时间应用
+
+```
+POST /api/sampling/apply
+```
+
+请求体：
+```json
+{"sampling_ms": 100, "machine_ids": ["node-1", "node-2"]}
+```
+
+- `sampling_ms`：整数，范围 `10` 到 `1000`，单位毫秒。
+- `machine_ids`：目标机器；前端传所有 connected 机器。
+- 若 sampling rebuild 正在运行，burn/update 请求返回 409。
+- 每台远端机器执行顺序固定为：`git reset --hard HEAD`、`git pull --recurse-submodules`、SCP 本地 patched 源码/构建脚本覆盖远端、`BURNER_CONTROL_INTERVAL_MS=<value> bash scripts/build_lookbusy.sh`、有 GPU 时执行 `BURNER_CONTROL_INTERVAL_MS=<value> bash scripts/build_gpu_burn.sh`。
+
 ---
 
 ## 6. WebSocket
@@ -486,6 +505,12 @@ POST /api/update/{id}
 // 更新日志（流式，每行一条）
 {"event": "update_log", "id": "node-1", "line": "Already up to date."}
 {"event": "update_done", "id": "node-1", "exit_code": 0}
+
+// 采样时间远端重编译
+{"event": "sampling_build_log", "id": "node-1", "line": "[pull] git pull --recurse-submodules"}
+{"event": "sampling_build_progress", "id": "node-1", "sampling_ms": 100, "step": "build_cpu", "status": "running", "completed": 3, "total": 5, "progress": 0.6}
+{"event": "sampling_build_done", "id": "node-1", "sampling_ms": 100, "exit_code": 0, "status": "success"}
+{"event": "sampling_build_complete", "sampling_ms": 100, "exit_code": 0}
 ```
 
 ---
@@ -572,13 +597,13 @@ POST /api/update/{id}
 - 波形区：WaveformSelector + WaveformEditor + ExpressionInput 三合一
 - Duration 输入框：显示单位为秒，标签为 `Duration (s)`，默认 `16`；前端提交时转换为 burner `-t` 所需的 `16s`
 - Period 输入框：显示单位为秒，标签为 `Period (s)`，默认 `1`；前端提交时转换为 burner `-p` 所需的 `1s`，支持小数秒
-- 同步模式切换：立即 / 延时 / 预约
-- 预约模式显示时间选择器，前端选择本地时间并转换成 UTC `start_time_utc` 提交给后端
+- 顶部启动区域提供 Realtime / Schedule 两个主模式；Realtime 为默认模式，Schedule 模式显示时间选择器，前端选择本地时间并转换成 UTC `start_time_utc` 提交给后端
+- `Sampling Time (ms)`：整数范围 `10` 到 `1000`，默认 `100`；点击 Apply 后对所有 connected 机器执行远端 reset/pull/scp/build，完成前禁用 burn/update 操作
 - **独立波形开关**：关闭时所有机器用全局波形；开启时每张 MachineCard 下方展示独立的 WaveformSelector
 
 **每台机器参数区（在 MachineCard 内）：**
 - 勾选框：Burn CPU / Burn GPU（默认两者都勾）
-- `Delay (s)` 输入框：支持小数秒，默认 `0`；延时和预约模式下显示
+- `Delay (s)` 输入框：支持小数秒，默认 `0`；Realtime 和 Schedule 模式均可配置。Realtime 下所有 delay 为 0 时提交 `immediate`，任一 delay 大于 0 时提交 `delayed`；Schedule 下提交 `scheduled`
 - 独立波形开关打开时：显示该机器的 WaveformSelector
 
 **机器启用开关：** 每台机器可整体勾选/取消，取消的机器不参与 burn。

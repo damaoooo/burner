@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { extractErrorMessage, startBurn, stopBurn } from "../api/client";
 import { useAppState } from "../state/AppState";
-import type { BurnStartRequest, JobInfo } from "../types";
+import type { BurnStartRequest, JobInfo, MachineState, RunMode, SyncMode } from "../types";
 
 interface Props {
   onToast: (message: string, kind?: "info" | "error" | "success") => void;
@@ -33,6 +33,9 @@ export default function GlobalBurnBar({ onToast }: Props) {
   const activeJobs = jobs.filter((job) => isActive(job, progressNow));
   const scheduledCount = jobs.filter((job) => job.started_at > progressNow).length;
   const hasJobs = jobs.length > 0;
+  const parsedSamplingMs = parseSamplingMs(state.samplingMs);
+  const samplingDirty = parsedSamplingMs !== undefined && parsedSamplingMs !== state.appliedSamplingMs;
+  const startDisabled = state.samplingBuild.running || parsedSamplingMs === undefined || samplingDirty;
 
   useEffect(() => {
     if (activeJobs.length > 0 && progressStartedAt === null) {
@@ -61,6 +64,18 @@ export default function GlobalBurnBar({ onToast }: Props) {
   }, [activeJobs, progressNow, progressStartedAt]);
 
   async function handleStart() {
+    if (state.samplingBuild.running) {
+      onToast("Sampling rebuild is running. Wait for it to finish before starting burn.", "error");
+      return;
+    }
+    if (parsedSamplingMs === undefined) {
+      onToast("Sampling time must be an integer from 10 to 1000 ms.", "error");
+      return;
+    }
+    if (samplingDirty) {
+      onToast("Apply the sampling time before starting burn.", "error");
+      return;
+    }
     const plan = buildPendingStart();
     if (!plan) {
       return;
@@ -101,13 +116,14 @@ export default function GlobalBurnBar({ onToast }: Props) {
       return undefined;
     }
 
-    const startTimeUtc = state.syncMode === "scheduled" ? toUtcIso(state.scheduledStartLocal) : undefined;
-    if (state.syncMode === "scheduled" && !startTimeUtc) {
+    const syncMode = requestSyncMode(state.runMode, selected);
+    const startTimeUtc = syncMode === "scheduled" ? toUtcIso(state.scheduledStartLocal) : undefined;
+    if (syncMode === "scheduled" && !startTimeUtc) {
       onToast("Choose a scheduled start time in the future.", "error");
       return undefined;
     }
 
-    const baseStart = baseStartSeconds(state.syncMode, state.scheduledStartLocal);
+    const baseStart = baseStartSeconds(syncMode, state.scheduledStartLocal);
     if (baseStart === undefined) {
       onToast("Choose a scheduled start time in the future.", "error");
       return undefined;
@@ -122,7 +138,7 @@ export default function GlobalBurnBar({ onToast }: Props) {
         enabled: machine.burnEnabled,
         burn_cpu: machine.burnCpu,
         burn_gpu: machine.burnGpu,
-        delay_seconds: state.syncMode === "immediate" ? 0 : Math.max(0, machine.delaySeconds),
+        delay_seconds: syncMode === "immediate" ? 0 : Math.max(0, machine.delaySeconds),
         waveform_name: waveformName
       };
     });
@@ -151,10 +167,11 @@ export default function GlobalBurnBar({ onToast }: Props) {
 
     return {
       payload: {
-        sync_mode: state.syncMode,
+        sync_mode: syncMode,
         start_time_utc: startTimeUtc,
         duration: `${durationSeconds}s`,
         period,
+        tick_seconds: state.appliedSamplingMs / 1000,
         machines
       },
       planned
@@ -190,9 +207,11 @@ export default function GlobalBurnBar({ onToast }: Props) {
         <button
           type="button"
           className="burn-button"
+          disabled={startDisabled}
+          title={startDisabled ? disabledReason(state.samplingBuild.running, parsedSamplingMs, samplingDirty) : undefined}
           onClick={() => void handleStart()}
         >
-          Start Burn
+          {state.samplingBuild.running ? "Compiling" : samplingDirty ? "Apply Sampling" : "Start Burn"}
         </button>
         {activeJobs.length > 0 ? (
           <>
@@ -205,7 +224,7 @@ export default function GlobalBurnBar({ onToast }: Props) {
           <span className="progress-text">{scheduledCount > 0 ? `${scheduledCount} scheduled` : "idle"}</span>
         )}
         {hasJobs && (
-          <button type="button" className="danger-button" onClick={() => void handleStop()}>
+          <button type="button" className="danger-button" disabled={state.samplingBuild.running} onClick={() => void handleStop()}>
             Stop All
           </button>
         )}
@@ -336,6 +355,38 @@ function baseStartSeconds(syncMode: string, scheduledLocal: string): number | un
     return undefined;
   }
   return parsed / 1000;
+}
+
+function requestSyncMode(runMode: RunMode, selected: MachineState[]): SyncMode {
+  if (runMode === "schedule") {
+    return "scheduled";
+  }
+  return selected.some((machine) => Math.max(0, machine.delaySeconds) > 0) ? "delayed" : "immediate";
+}
+
+function parseSamplingMs(value: string): number | undefined {
+  const trimmed = value.trim();
+  if (!/^[0-9]+$/.test(trimmed)) {
+    return undefined;
+  }
+  const amount = Number(trimmed);
+  if (!Number.isInteger(amount) || amount < 10 || amount > 1000) {
+    return undefined;
+  }
+  return amount;
+}
+
+function disabledReason(running: boolean, parsedSamplingMs: number | undefined, dirty: boolean): string {
+  if (running) {
+    return "Sampling rebuild is running";
+  }
+  if (parsedSamplingMs === undefined) {
+    return "Sampling time must be 10-1000 ms";
+  }
+  if (dirty) {
+    return "Apply sampling time first";
+  }
+  return "";
 }
 
 function toUtcIso(localValue: string): string | undefined {

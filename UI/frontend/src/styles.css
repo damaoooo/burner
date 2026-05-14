@@ -147,6 +147,44 @@
   --chart-tooltip-text: #e5f8ff;
 }
 
+:root[data-theme="light"][data-run-mode="realtime"] {
+  --bg-grid: rgb(22 163 74 / 7%);
+  --accent: #16a34a;
+  --accent-strong: #15803d;
+  --accent-soft: #dcfce7;
+  --chart-line: #16a34a;
+  --chart-tooltip-border: #16a34a;
+}
+
+:root[data-theme="dark"][data-run-mode="realtime"] {
+  --bg-grid: rgb(52 211 153 / 8%);
+  --accent: #34d399;
+  --accent-strong: #86efac;
+  --accent-soft: rgb(16 185 129 / 18%);
+  --chart-line: #34d399;
+  --chart-point: #bbf7d0;
+  --chart-tooltip-border: #34d399;
+}
+
+:root[data-theme="light"][data-run-mode="schedule"] {
+  --bg-grid: rgb(37 99 235 / 7%);
+  --accent: #2563eb;
+  --accent-strong: #1d4ed8;
+  --accent-soft: #dbeafe;
+  --chart-line: #2563eb;
+  --chart-tooltip-border: #2563eb;
+}
+
+:root[data-theme="dark"][data-run-mode="schedule"] {
+  --bg-grid: rgb(96 165 250 / 8%);
+  --accent: #60a5fa;
+  --accent-strong: #93c5fd;
+  --accent-soft: rgb(37 99 235 / 18%);
+  --chart-line: #60a5fa;
+  --chart-point: #bfdbfe;
+  --chart-tooltip-border: #60a5fa;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -179,9 +217,18 @@ button:disabled {
 }
 
 .app-shell {
+  --mode-accent: var(--accent);
+  --mode-accent-strong: var(--accent-strong);
+  --mode-accent-soft: var(--accent-soft);
   width: min(1480px, calc(100vw - 32px));
   margin: 0 auto;
   padding: 18px 0 40px;
+}
+
+.app-shell.run-mode-schedule {
+  --mode-accent: var(--accent);
+  --mode-accent-strong: var(--accent-strong);
+  --mode-accent-soft: var(--accent-soft);
 }
 
 .connection-banner {
@@ -248,7 +295,14 @@ button:disabled {
 
 .header-actions {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: minmax(360px, 0.74fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: stretch;
+}
+
+.header-controls {
+  display: grid;
+  grid-template-columns: auto minmax(230px, 1fr);
   gap: 12px;
   align-items: stretch;
 }
@@ -264,6 +318,51 @@ button:disabled {
   box-shadow: var(--shadow-soft);
 }
 
+.top-mode-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  overflow: hidden;
+  min-height: 62px;
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border));
+  border-radius: 8px;
+  background: var(--panel-strong);
+  box-shadow: var(--shadow-soft);
+}
+
+.top-mode-switch button {
+  border: 0;
+  background: transparent;
+  color: var(--text-soft);
+  font-size: 16px;
+  font-weight: 950;
+}
+
+.top-mode-switch button + button {
+  border-left: 1px solid var(--border);
+}
+
+.top-mode-switch button.realtime.selected {
+  background: linear-gradient(180deg, #22c55e, #15803d);
+  color: #ffffff;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 16%);
+}
+
+.top-mode-switch button.schedule.selected {
+  background: linear-gradient(180deg, #3b82f6, #1d4ed8);
+  color: #ffffff;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 16%);
+}
+
+:root[data-theme="dark"] .top-mode-switch button.realtime.selected {
+  background: linear-gradient(180deg, #34d399, #047857);
+  color: #04130c;
+}
+
+:root[data-theme="dark"] .top-mode-switch button.schedule.selected {
+  background: linear-gradient(180deg, #60a5fa, #2563eb);
+  color: #04111f;
+}
+
 .global-burn-bar {
   display: grid;
   grid-template-columns: auto minmax(120px, 1fr) auto auto;
@@ -271,11 +370,44 @@ button:disabled {
   align-items: center;
   justify-self: end;
   width: 100%;
-  border: 1px solid var(--border);
+  border: 1px solid color-mix(in srgb, var(--mode-accent) 34%, var(--border));
   border-radius: 8px;
   padding: 12px;
   background: color-mix(in srgb, var(--panel) 90%, transparent);
   box-shadow: var(--shadow-soft);
+}
+
+.start-stack {
+  display: grid;
+  gap: 8px;
+  min-width: 188px;
+}
+
+.mode-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--mode-accent) 35%, var(--border));
+  border-radius: 8px;
+  background: var(--panel-strong);
+}
+
+.mode-switch button {
+  min-height: 34px;
+  border: 0;
+  background: transparent;
+  color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.mode-switch button + button {
+  border-left: 1px solid var(--border);
+}
+
+.mode-switch button.selected {
+  background: var(--mode-accent-soft);
+  color: var(--mode-accent-strong);
 }
 
 .status-deck {
@@ -329,7 +461,7 @@ button:disabled {
 .progress-fill {
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, var(--success), var(--cyan));
+  background: linear-gradient(90deg, var(--mode-accent), var(--cyan));
   transition: width 100ms linear;
 }
 
@@ -369,7 +501,19 @@ button:disabled {
 .run-params {
   display: grid;
   gap: 11px;
+  border-color: color-mix(in srgb, var(--mode-accent) 32%, var(--border));
   padding: 16px;
+}
+
+.mode-caption {
+  width: fit-content;
+  border: 1px solid color-mix(in srgb, var(--mode-accent) 42%, transparent);
+  border-radius: 999px;
+  padding: 4px 9px;
+  background: var(--mode-accent-soft);
+  color: var(--mode-accent-strong);
+  font-size: 12px;
+  font-weight: 900;
 }
 
 .section-heading {
@@ -393,8 +537,8 @@ button:disabled {
 }
 
 .field:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+  border-color: var(--mode-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mode-accent) 18%, transparent);
 }
 
 .field-error {
@@ -630,10 +774,10 @@ button:disabled {
 
 .primary-button,
 .burn-button {
-  border-color: color-mix(in srgb, var(--accent) 65%, transparent);
-  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  border-color: color-mix(in srgb, var(--mode-accent) 65%, transparent);
+  background: linear-gradient(180deg, var(--mode-accent), var(--mode-accent-strong));
   color: #ffffff;
-  box-shadow: 0 10px 22px color-mix(in srgb, var(--accent) 24%, transparent);
+  box-shadow: 0 10px 22px color-mix(in srgb, var(--mode-accent) 24%, transparent);
 }
 
 .secondary-button {
@@ -650,6 +794,104 @@ button:disabled {
 
 .burn-button {
   min-width: 116px;
+}
+
+.sampling-row {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 10px;
+  align-items: end;
+}
+
+.caution-box {
+  min-height: 68px;
+  border: 1px solid color-mix(in srgb, var(--warning) 44%, var(--border));
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: var(--warning-soft);
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.caution-box strong,
+.caution-box span {
+  display: block;
+}
+
+.caution-box strong {
+  color: var(--warning);
+  margin-bottom: 3px;
+}
+
+.sampling-apply-button {
+  width: 100%;
+}
+
+.sampling-applied-button {
+  border-color: var(--border);
+  background: var(--panel-raised);
+  color: var(--text);
+  box-shadow: var(--shadow-soft);
+}
+
+.sampling-progress-panel {
+  display: grid;
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--mode-accent) 28%, var(--border));
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--panel-strong);
+}
+
+.sampling-progress-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--text-soft);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.sampling-progress-header strong {
+  color: var(--mode-accent-strong);
+}
+
+.sampling-current {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.compact-log {
+  min-height: 92px;
+  max-height: 150px;
+}
+
+.sampling-modal .sampling-progress-panel {
+  max-height: min(62vh, 520px);
+}
+
+.sampling-confirm-grid {
+  display: grid;
+  grid-template-columns: 100px minmax(0, 1fr);
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--panel-strong);
+  color: var(--text-soft);
+}
+
+.sampling-confirm-grid strong {
+  color: var(--text);
+}
+
+.success-text {
+  color: var(--success);
+}
+
+.error-text {
+  color: var(--danger);
 }
 
 .burn-pill {
@@ -826,6 +1068,7 @@ button:disabled {
 @media (max-width: 900px) {
   .app-header,
   .header-actions,
+  .header-controls,
   .control-grid {
     grid-template-columns: 1fr;
   }
@@ -851,6 +1094,15 @@ button:disabled {
 
   .global-burn-bar {
     grid-template-columns: 1fr auto;
+  }
+
+  .start-stack,
+  .sampling-row {
+    grid-column: 1 / -1;
+  }
+
+  .sampling-row {
+    grid-template-columns: 1fr;
   }
 
   .progress-track {

@@ -14,6 +14,7 @@ from burn_controller import BurnController, BurnError, BurnOverlapError, Machine
 from config import ConfigError, ConfigStore, UI_ROOT
 from file_transfer import FileTransfer
 from machine_info import query_hw_info
+from sampling_controller import SamplingConflictError, SamplingController, SamplingError
 from ssh_manager import SSHManager
 from update_controller import UpdateConflictError, UpdateController
 from waveform_store import WaveformError, WaveformExistsError, WaveformStore
@@ -38,12 +39,18 @@ class BurnStartPayload(BaseModel):
     start_time_utc: str | None = None
     duration: str
     period: str
+    tick_seconds: float = 0.1
     machines: list[BurnMachinePayload]
 
 
 class BurnStopPayload(BaseModel):
     machine_ids: list[str] | Literal["all"] | None = None
     job_ids: list[str] | Literal["all"] | None = None
+
+
+class SamplingApplyPayload(BaseModel):
+    sampling_ms: int
+    machine_ids: list[str] | None = None
 
 
 class WebSocketHub:
@@ -119,6 +126,13 @@ burn_controller = BurnController(
 update_controller = UpdateController(
     config_store,
     ssh_manager,
+    burn_controller,
+    broadcast,
+)
+sampling_controller = SamplingController(
+    config_store,
+    ssh_manager,
+    file_transfer,
     burn_controller,
     broadcast,
 )
@@ -228,6 +242,8 @@ async def save_waveform(payload: WaveformCreate):
 
 @app.post("/api/burn/start")
 async def start_burn(payload: BurnStartPayload):
+    if sampling_controller.is_running():
+        raise HTTPException(status_code=409, detail="Sampling rebuild is currently running")
     machines = [
         MachineBurnRequest(
             id=item.id,
@@ -246,6 +262,7 @@ async def start_burn(payload: BurnStartPayload):
             payload.period,
             machines,
             payload.start_time_utc,
+            payload.tick_seconds,
         )
     except BurnOverlapError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -273,11 +290,55 @@ async def burn_status():
 @app.post("/api/update/{machine_id}")
 async def update_machine(machine_id: str, background_tasks: BackgroundTasks):
     _require_machine(machine_id)
+    if sampling_controller.is_running():
+        raise HTTPException(status_code=409, detail="Sampling rebuild is currently running")
     if burn_controller.has_jobs(machine_id):
         raise HTTPException(status_code=409, detail="Machine is currently burning")
     has_gpu = bool((hw_cache.get(machine_id) or {}).get("gpus"))
     background_tasks.add_task(_run_update_task, machine_id, has_gpu)
     return {"status": "started"}
+
+
+@app.post("/api/sampling/apply")
+async def apply_sampling_time(payload: SamplingApplyPayload, background_tasks: BackgroundTasks):
+    try:
+        machines = config_store.list_machines()
+    except ConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if update_controller.is_running():
+        raise HTTPException(status_code=409, detail="Update is currently running")
+
+    configured_ids = {machine.id for machine in machines}
+    target_ids = payload.machine_ids
+    if target_ids is None:
+        target_ids = [
+            machine.id
+            for machine in machines
+            if ssh_manager.status_for(machine.id) == "connected"
+        ]
+    for machine_id in target_ids:
+        if machine_id not in configured_ids:
+            raise HTTPException(status_code=404, detail=f"unknown machine id: {machine_id}")
+
+    try:
+        await sampling_controller.reserve_apply(payload.sampling_ms, target_ids)
+    except SamplingConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except SamplingError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    has_gpu_by_machine = {
+        machine_id: bool((hw_cache.get(machine_id) or {}).get("gpus"))
+        for machine_id in target_ids
+    }
+    background_tasks.add_task(
+        _run_sampling_task,
+        payload.sampling_ms,
+        target_ids,
+        has_gpu_by_machine,
+    )
+    return {"status": "started", "machine_ids": target_ids}
 
 
 @app.websocket("/ws")
@@ -328,6 +389,29 @@ async def _run_update_task(machine_id: str, has_gpu: bool) -> None:
         await broadcast({"event": "update_done", "id": machine_id, "exit_code": 1})
 
 
+async def _run_sampling_task(
+    sampling_ms: int,
+    machine_ids: list[str],
+    has_gpu_by_machine: dict[str, bool],
+) -> None:
+    try:
+        await sampling_controller.run_reserved_apply(
+            sampling_ms,
+            machine_ids,
+            has_gpu_by_machine,
+        )
+    except Exception as exc:
+        await broadcast({"event": "sampling_build_log", "id": "all", "line": f"sampling rebuild failed: {exc}"})
+        await broadcast(
+            {
+                "event": "sampling_build_complete",
+                "sampling_ms": sampling_ms,
+                "exit_code": 1,
+                "message": str(exc),
+            }
+        )
+
+
 async def _send_snapshot(websocket: WebSocket) -> None:
     for machine in config_store.list_machines():
         payload = {
@@ -358,6 +442,21 @@ async def _send_snapshot(websocket: WebSocket) -> None:
                 "sync_mode": job.sync_mode,
             }
         )
+    sampling_status = sampling_controller.status()
+    if sampling_status["running"]:
+        for item in sampling_status["machines"]:
+            await websocket.send_json(
+                {
+                    "event": "sampling_build_progress",
+                    "id": item["id"],
+                    "sampling_ms": item["sampling_ms"],
+                    "step": item["step"],
+                    "status": item["status"],
+                    "completed": 0,
+                    "total": 1,
+                    "progress": item["progress"],
+                }
+            )
 
 
 def _require_machine(machine_id: str) -> None:

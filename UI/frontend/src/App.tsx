@@ -85,8 +85,47 @@ export default function App() {
     }
     if (event.event === "update_done") {
       dispatch({ type: "setUpdateDone", machineId: event.id, exitCode: event.exit_code });
+      return;
     }
-  }, []);
+    if (event.event === "sampling_build_log") {
+      dispatch({ type: "appendSamplingBuildLog", machineId: event.id, line: event.line });
+      return;
+    }
+    if (event.event === "sampling_build_progress") {
+      dispatch({
+        type: "setSamplingBuildProgress",
+        machineId: event.id,
+        samplingMs: event.sampling_ms,
+        status: event.status,
+        step: event.step,
+        progress: event.progress
+      });
+      return;
+    }
+    if (event.event === "sampling_build_done") {
+      dispatch({
+        type: "setSamplingBuildDone",
+        machineId: event.id,
+        samplingMs: event.sampling_ms,
+        exitCode: event.exit_code,
+        status: event.status,
+        message: event.message
+      });
+      return;
+    }
+    if (event.event === "sampling_build_complete") {
+      dispatch({
+        type: "samplingBuildComplete",
+        samplingMs: event.sampling_ms,
+        exitCode: event.exit_code,
+        message: event.message
+      });
+      addToast(
+        event.exit_code === 0 ? "Sampling time applied and rebuilt." : event.message || "Sampling rebuild failed.",
+        event.exit_code === 0 ? "success" : "error"
+      );
+    }
+  }, [addToast]);
 
   useEffect(() => {
     async function load() {
@@ -143,13 +182,18 @@ export default function App() {
     window.dispatchEvent(new CustomEvent("burner-theme-change"));
   }, [theme]);
 
+  useEffect(() => {
+    document.documentElement.dataset.runMode = state.runMode;
+    window.dispatchEvent(new CustomEvent("burner-theme-change"));
+  }, [state.runMode]);
+
   function toggleTheme() {
     setTheme((current) => (current === "dark" ? "light" : "dark"));
   }
 
   return (
     <AppStateContext.Provider value={{ state, dispatch }}>
-      <div className="app-shell">
+      <div className={`app-shell run-mode-${state.runMode}`}>
         {!state.wsConnected && (
           <div className="connection-banner">Server connection lost. Reconnecting...</div>
         )}
@@ -160,9 +204,25 @@ export default function App() {
             <p>Remote CPU / GPU power load orchestration</p>
           </div>
           <div className="header-actions">
-            <button type="button" className="theme-toggle" onClick={toggleTheme}>
-              {theme === "dark" ? "Day Mode" : "Night Mode"}
-            </button>
+            <div className="header-controls">
+              <button type="button" className="theme-toggle" onClick={toggleTheme}>
+                {theme === "dark" ? "Day Mode" : "Night Mode"}
+              </button>
+              <RunModeSwitch
+                value={state.runMode}
+                disabled={state.samplingBuild.running}
+                onChange={(value) =>
+                  dispatch({
+                    type: "setRunMode",
+                    value,
+                    scheduledStartLocal:
+                      value === "schedule" && !state.scheduledStartLocal
+                        ? formatLocalDateTime(new Date(Date.now() + 5 * 60 * 1000))
+                        : undefined
+                  })
+                }
+              />
+            </div>
             <GlobalBurnBar onToast={addToast} />
           </div>
         </header>
@@ -216,6 +276,54 @@ function StatusTile({ label, value, detail }: { label: string; value: number; de
       <span className="status-detail">{detail}</span>
     </div>
   );
+}
+
+function RunModeSwitch({
+  value,
+  disabled,
+  onChange
+}: {
+  value: "realtime" | "schedule";
+  disabled: boolean;
+  onChange: (value: "realtime" | "schedule") => void;
+}) {
+  return (
+    <div className="top-mode-switch" aria-label="run mode">
+      <button
+        type="button"
+        className={value === "realtime" ? "selected realtime" : "realtime"}
+        disabled={disabled}
+        onClick={() => onChange("realtime")}
+      >
+        Realtime
+      </button>
+      <button
+        type="button"
+        className={value === "schedule" ? "selected schedule" : "schedule"}
+        disabled={disabled}
+        onClick={() => onChange("schedule")}
+      >
+        Schedule
+      </button>
+    </div>
+  );
+}
+
+function formatLocalDateTime(date: Date): string {
+  const pad = (item: number) => String(item).padStart(2, "0");
+  return [
+    date.getFullYear(),
+    "-",
+    pad(date.getMonth() + 1),
+    "-",
+    pad(date.getDate()),
+    "T",
+    pad(date.getHours()),
+    ":",
+    pad(date.getMinutes()),
+    ":",
+    pad(date.getSeconds())
+  ].join("");
 }
 
 function getInitialTheme(): ThemeMode {

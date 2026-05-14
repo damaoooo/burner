@@ -109,8 +109,9 @@ x,y
 
 ### 3.3 调度规则
 
-- 默认调度 tick 为 `0.1s`。
+- 默认调度 tick 为 `0.1s`；WebUI 会将已应用的采样时间作为 `--tick` 传给 burner。
 - 每个 tick 根据当前 elapsed time 计算目标强度。
+- patched CPU/GPU 后端默认以 `100ms` 控制窗口读取外部 util 文件；可通过 `BURNER_CONTROL_INTERVAL_MS=<10-1000>` 重新编译调整。
 - 强度 `0` 表示不 burn。
 - 强度 `1` 表示 100% burn。
 - 总运行时长达到 `-t` 后，停止所有底层 burn 进程并退出。

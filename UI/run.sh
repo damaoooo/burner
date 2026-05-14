@@ -4,7 +4,7 @@ set -euo pipefail
 UI_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 UI_HOST="${BURNER_UI_HOST:-0.0.0.0}"
 UI_PORT="${BURNER_UI_PORT:-8000}"
-CONDA_ENV="${BURNER_CONDA_ENV:-ReLL}"
+CONDA_ENV="${BURNER_CONDA_ENV:-burner}"
 
 cd "${UI_ROOT}/backend"
 if ! conda run -n "${CONDA_ENV}" python -c "import asyncssh, fastapi, pydantic, uvicorn" >/dev/null 2>&1

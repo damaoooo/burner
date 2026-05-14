@@ -8,6 +8,7 @@ interface Props {
 
 export default function SchedulePanel({ onToast }: Props) {
   const { state } = useAppState();
+  const samplingRunning = state.samplingBuild.running;
   const now = Date.now() / 1000;
   const scheduled = Object.values(state.burnJobs)
     .filter((job) => job.started_at > now)
@@ -39,7 +40,12 @@ export default function SchedulePanel({ onToast }: Props) {
               <span>{formatLocal(job.started_at + job.duration_seconds)}</span>
               <span>{job.waveform_name ?? "waveform"}</span>
               <span>{job.job_id.slice(-8)}</span>
-              <button type="button" className="danger-button compact-button" onClick={() => void cancelJob(job)}>
+              <button
+                type="button"
+                className="danger-button compact-button"
+                disabled={samplingRunning}
+                onClick={() => void cancelJob(job)}
+              >
                 Cancel
               </button>
             </div>

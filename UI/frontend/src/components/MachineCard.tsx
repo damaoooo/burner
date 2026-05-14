@@ -17,6 +17,7 @@ export default function MachineCard({ machine, onToast }: Props) {
   const machineJobs = Object.values(state.burnJobs).filter((job) => job.machine_id === machine.config.id);
   const isBurning = machineJobs.length > 0;
   const connected = machine.connectionStatus === "connected";
+  const samplingRunning = state.samplingBuild.running;
 
   useEffect(() => {
     if (machine.connectionStatus === "error" && machine.errorMessage) {
@@ -72,6 +73,7 @@ export default function MachineCard({ machine, onToast }: Props) {
         <label className="enable-switch">
           <input
             type="checkbox"
+            disabled={samplingRunning}
             checked={machine.burnEnabled}
             onChange={(event) =>
               dispatch({
@@ -88,14 +90,19 @@ export default function MachineCard({ machine, onToast }: Props) {
 
       <div className="button-row">
         {connected ? (
-          <button type="button" className="secondary-button" onClick={() => void handleDisconnect()}>
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={samplingRunning}
+            onClick={() => void handleDisconnect()}
+          >
             Disconnect
           </button>
         ) : (
           <button
             type="button"
             className="primary-button"
-            disabled={machine.connectionStatus === "connecting"}
+            disabled={machine.connectionStatus === "connecting" || samplingRunning}
             onClick={() => void handleConnect()}
           >
             {machine.connectionStatus === "connecting" ? "Connecting" : "Connect"}
@@ -104,7 +111,7 @@ export default function MachineCard({ machine, onToast }: Props) {
         <button
           type="button"
           className="secondary-button"
-          disabled={!connected}
+          disabled={!connected || samplingRunning}
           onClick={() => void handleRefreshHw()}
         >
           Refresh Hardware
@@ -147,6 +154,7 @@ export default function MachineCard({ machine, onToast }: Props) {
         <label className="toggle-row">
           <input
             type="checkbox"
+            disabled={samplingRunning}
             checked={machine.burnCpu}
             onChange={(event) =>
               dispatch({
@@ -162,6 +170,7 @@ export default function MachineCard({ machine, onToast }: Props) {
         <label className="toggle-row">
           <input
             type="checkbox"
+            disabled={samplingRunning}
             checked={machine.burnGpu}
             onChange={(event) =>
               dispatch({
@@ -174,25 +183,24 @@ export default function MachineCard({ machine, onToast }: Props) {
           />
           <span>Burn GPU</span>
         </label>
-        {state.syncMode !== "immediate" && (
-          <label className="delay-field">
-            <span>Delay (s)</span>
-            <input
-              className="field"
-              type="number"
-              min={0}
-              step={0.01}
-              value={machine.delaySeconds}
-              onChange={(event) =>
-                dispatch({
-                  type: "setMachineDelay",
-                  machineId: machine.config.id,
-                  value: Number(event.target.value)
-                })
-              }
-            />
-          </label>
-        )}
+        <label className="delay-field">
+          <span>Delay (s)</span>
+          <input
+            className="field"
+            type="number"
+            min={0}
+            step={0.01}
+            disabled={samplingRunning}
+            value={machine.delaySeconds}
+            onChange={(event) =>
+              dispatch({
+                type: "setMachineDelay",
+                machineId: machine.config.id,
+                value: Number(event.target.value)
+              })
+            }
+          />
+        </label>
         {state.usePerMachineWaveform && (
           <WaveformSelector
             waveforms={state.waveforms}
@@ -206,7 +214,7 @@ export default function MachineCard({ machine, onToast }: Props) {
         <button
           type="button"
           className="secondary-button"
-          disabled={isBurning || !connected}
+          disabled={isBurning || !connected || samplingRunning}
           onClick={() => setShowUpdate((value) => !value)}
         >
           Update
@@ -215,7 +223,7 @@ export default function MachineCard({ machine, onToast }: Props) {
       </div>
 
       {showUpdate && (
-        <UpdatePanel machineId={machine.config.id} disabled={isBurning || !connected} onToast={onToast} />
+        <UpdatePanel machineId={machine.config.id} disabled={isBurning || !connected || samplingRunning} onToast={onToast} />
       )}
 
       {showError && machine.errorMessage && (

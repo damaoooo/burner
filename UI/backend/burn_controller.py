@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import re
 import shlex
 import time
@@ -107,6 +108,7 @@ class BurnController:
         period: str,
         machines: list[MachineBurnRequest],
         start_time_utc: str | None = None,
+        tick_seconds: float = 0.1,
     ) -> list[JobInfo]:
         targets = [machine for machine in machines if machine.enabled]
         if not targets:
@@ -116,6 +118,7 @@ class BurnController:
 
         duration_seconds = parse_duration(duration)
         parse_period(period)
+        parse_tick(tick_seconds)
 
         for target in targets:
             self._config.get_machine(target.id)
@@ -138,7 +141,7 @@ class BurnController:
         await asyncio.gather(*(self._copy_waveform(plan) for plan in plans))
 
         jobs = await asyncio.gather(
-            *[self._start_single(plan, duration, period) for plan in plans]
+            *[self._start_single(plan, duration, period, tick_seconds) for plan in plans]
         )
         return list(jobs)
 
@@ -223,6 +226,7 @@ class BurnController:
         plan: PlannedJob,
         duration: str,
         period: str,
+        tick_seconds: float,
     ) -> JobInfo:
         target = plan.target
         machine = self._config.get_machine(target.id)
@@ -234,6 +238,7 @@ class BurnController:
             args.append("--gpu")
         relative_waveform = f"./ui_waveforms/{plan.job_id}.csv"
         args.extend(["-f", relative_waveform, "-t", duration, "-p", period])
+        args.extend(["--tick", format_float(tick_seconds)])
         if plan.start_time_utc is not None:
             args.extend(["--start", iso_z(plan.start_time_utc)])
 
@@ -356,6 +361,16 @@ def parse_period(value: str) -> float:
     if amount <= 0:
         raise BurnError("period must be greater than 0")
     return amount * {"s": 1, "m": 60, "h": 3600}[match.group(2)]
+
+
+def parse_tick(value: float) -> float:
+    if not math.isfinite(value) or value < 0.01 or value > 1.0:
+        raise BurnError("tick_seconds must be between 0.01 and 1.0")
+    return value
+
+
+def format_float(value: float) -> str:
+    return f"{value:.6f}".rstrip("0").rstrip(".")
 
 
 def iso_z(value: datetime) -> str:

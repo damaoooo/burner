@@ -6,7 +6,8 @@ import type {
   JobInfo,
   MachineApiRecord,
   Point,
-  SyncMode,
+  RunMode,
+  SamplingBuildStatus,
   WaveformInfo
 } from "../types";
 
@@ -20,7 +21,28 @@ export type Action =
   | { type: "setHwInfo"; machineId: string; hwInfo: HwInfo }
   | { type: "setMachineOption"; machineId: string; key: "burnEnabled" | "burnCpu" | "burnGpu"; value: boolean }
   | { type: "setMachineDelay"; machineId: string; value: number }
-  | { type: "setBurnParams"; duration?: string; period?: string; syncMode?: SyncMode; scheduledStartLocal?: string }
+  | { type: "setRunMode"; value: RunMode; scheduledStartLocal?: string }
+  | { type: "setBurnParams"; duration?: string; period?: string; scheduledStartLocal?: string; samplingMs?: string }
+  | { type: "startSamplingBuild"; machineIds: string[]; samplingMs: number }
+  | { type: "appendSamplingBuildLog"; machineId: string; line: string }
+  | {
+      type: "setSamplingBuildProgress";
+      machineId: string;
+      samplingMs: number;
+      status: SamplingBuildStatus;
+      step: string;
+      progress: number;
+    }
+  | {
+      type: "setSamplingBuildDone";
+      machineId: string;
+      samplingMs: number;
+      exitCode: number;
+      status: SamplingBuildStatus;
+      message?: string;
+    }
+  | { type: "samplingBuildComplete"; samplingMs: number; exitCode: number; message?: string }
+  | { type: "samplingBuildFailedToStart"; message: string }
   | { type: "burnStarted"; job: JobInfo }
   | { type: "burnStopped"; jobId?: string; machineId?: string }
   | { type: "clearUpdateLog"; machineId: string }
@@ -39,8 +61,16 @@ export const initialState: AppState = {
   usePerMachineWaveform: false,
   duration: "16",
   period: "1",
-  syncMode: "immediate",
+  runMode: "realtime",
   scheduledStartLocal: "",
+  samplingMs: "100",
+  appliedSamplingMs: 100,
+  samplingBuild: {
+    running: false,
+    targetMachineIds: [],
+    samplingMs: 100,
+    machines: {}
+  },
   burnJobs: {},
   updateLogs: {},
   updateStatus: {},
@@ -159,13 +189,145 @@ export function reducer(state: AppState, action: Action): AppState {
         }
       };
     }
+    case "setRunMode":
+      return {
+        ...state,
+        runMode: action.value,
+        scheduledStartLocal: action.scheduledStartLocal ?? state.scheduledStartLocal
+      };
     case "setBurnParams":
       return {
         ...state,
         duration: action.duration ?? state.duration,
         period: action.period ?? state.period,
-        syncMode: action.syncMode ?? state.syncMode,
-        scheduledStartLocal: action.scheduledStartLocal ?? state.scheduledStartLocal
+        scheduledStartLocal: action.scheduledStartLocal ?? state.scheduledStartLocal,
+        samplingMs: action.samplingMs ?? state.samplingMs
+      };
+    case "startSamplingBuild":
+      return {
+        ...state,
+        samplingBuild: {
+          running: true,
+          targetMachineIds: action.machineIds,
+          samplingMs: action.samplingMs,
+          exitCode: undefined,
+          message: undefined,
+          machines: Object.fromEntries(
+            action.machineIds.map((machineId) => [
+              machineId,
+              {
+                status: "queued",
+                step: "queued",
+                progress: 0,
+                logs: []
+              }
+            ])
+          )
+        }
+      };
+    case "appendSamplingBuildLog": {
+      const current = state.samplingBuild.machines[action.machineId] ?? {
+        status: "running" as const,
+        step: "running",
+        progress: 0,
+        logs: []
+      };
+      return {
+        ...state,
+        samplingBuild: {
+          ...state.samplingBuild,
+          machines: {
+            ...state.samplingBuild.machines,
+            [action.machineId]: {
+              ...current,
+              logs: [...current.logs, action.line]
+            }
+          }
+        }
+      };
+    }
+    case "setSamplingBuildProgress": {
+      const current = state.samplingBuild.machines[action.machineId] ?? {
+        status: action.status,
+        step: action.step,
+        progress: action.progress,
+        logs: []
+      };
+      return {
+        ...state,
+        samplingBuild: {
+          ...state.samplingBuild,
+          running: true,
+          samplingMs: action.samplingMs,
+          machines: {
+            ...state.samplingBuild.machines,
+            [action.machineId]: {
+              ...current,
+              status: action.status,
+              step: action.step,
+              progress: action.progress
+            }
+          }
+        }
+      };
+    }
+    case "setSamplingBuildDone": {
+      const current = state.samplingBuild.machines[action.machineId] ?? {
+        status: action.status,
+        step: action.status,
+        progress: 1,
+        logs: []
+      };
+      return {
+        ...state,
+        samplingBuild: {
+          ...state.samplingBuild,
+          samplingMs: action.samplingMs,
+          machines: {
+            ...state.samplingBuild.machines,
+            [action.machineId]: {
+              ...current,
+              status: action.status,
+              step: action.status,
+              progress: 1,
+              exitCode: action.exitCode,
+              message: action.message
+            }
+          }
+        }
+      };
+    }
+    case "samplingBuildComplete":
+      return {
+        ...state,
+        appliedSamplingMs: action.exitCode === 0 ? action.samplingMs : state.appliedSamplingMs,
+        samplingBuild: {
+          ...state.samplingBuild,
+          running: false,
+          exitCode: action.exitCode,
+          message: action.message
+        }
+      };
+    case "samplingBuildFailedToStart":
+      return {
+        ...state,
+        samplingBuild: {
+          running: false,
+          targetMachineIds: [],
+          samplingMs: state.appliedSamplingMs,
+          exitCode: 1,
+          message: action.message,
+          machines: {
+            all: {
+              status: "failed",
+              step: "failed",
+              progress: 1,
+              logs: [action.message],
+              exitCode: 1,
+              message: action.message
+            }
+          }
+        }
       };
     case "burnStarted":
       return {

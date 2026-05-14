@@ -1,5 +1,7 @@
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
 export type SyncMode = "immediate" | "delayed" | "scheduled";
+export type RunMode = "realtime" | "schedule";
+export type SamplingBuildStatus = "idle" | "queued" | "running" | "success" | "failed";
 
 export interface Point {
   x: number;
@@ -80,12 +82,33 @@ export interface AppState {
   usePerMachineWaveform: boolean;
   duration: string;
   period: string;
-  syncMode: SyncMode;
+  runMode: RunMode;
   scheduledStartLocal: string;
+  samplingMs: string;
+  appliedSamplingMs: number;
+  samplingBuild: SamplingBuildState;
   burnJobs: Record<string, JobInfo>;
   updateLogs: Record<string, string[]>;
   updateStatus: Record<string, "idle" | "running" | "success" | "failed">;
   wsConnected: boolean;
+}
+
+export interface SamplingBuildMachineState {
+  status: SamplingBuildStatus;
+  step: string;
+  progress: number;
+  logs: string[];
+  exitCode?: number;
+  message?: string;
+}
+
+export interface SamplingBuildState {
+  running: boolean;
+  targetMachineIds: string[];
+  samplingMs: number;
+  machines: Record<string, SamplingBuildMachineState>;
+  exitCode?: number;
+  message?: string;
 }
 
 export type WsEvent =
@@ -125,6 +148,35 @@ export type WsEvent =
       id: string;
       exit_code: number;
       message?: string;
+    }
+  | {
+      event: "sampling_build_log";
+      id: string;
+      line: string;
+    }
+  | {
+      event: "sampling_build_progress";
+      id: string;
+      sampling_ms: number;
+      step: string;
+      status: SamplingBuildStatus;
+      completed: number;
+      total: number;
+      progress: number;
+    }
+  | {
+      event: "sampling_build_done";
+      id: string;
+      sampling_ms: number;
+      exit_code: number;
+      status: SamplingBuildStatus;
+      message?: string;
+    }
+  | {
+      event: "sampling_build_complete";
+      sampling_ms: number;
+      exit_code: number;
+      message?: string;
     };
 
 export interface BurnStartRequest {
@@ -132,6 +184,7 @@ export interface BurnStartRequest {
   start_time_utc?: string;
   duration: string;
   period: string;
+  tick_seconds: number;
   machines: Array<{
     id: string;
     enabled: boolean;
