@@ -43,7 +43,7 @@ export default function WaveformEditor({ points, onChange, onSaved, onToast }: P
     () => ({
       datasets: [
         {
-          label: "burn",
+          label: "Load",
           data: points,
           borderColor: chartTheme.line,
           backgroundColor: chartTheme.line,
@@ -76,6 +76,13 @@ export default function WaveformEditor({ points, onChange, onSaved, onToast }: P
             max: 1,
             border: { color: chartTheme.axis },
             grid: { color: chartTheme.grid },
+            title: {
+              display: true,
+              text: "Cycle Position (0-1)",
+              color: chartTheme.title,
+              font: { size: 12, weight: 600 },
+              padding: { top: 8 }
+            },
             ticks: { color: chartTheme.tick, stepSize: 0.25 }
           },
           y: {
@@ -84,6 +91,13 @@ export default function WaveformEditor({ points, onChange, onSaved, onToast }: P
             max: 1,
             border: { color: chartTheme.axis },
             grid: { color: chartTheme.grid },
+            title: {
+              display: true,
+              text: "Load (0-1, 1.0 = 100%)",
+              color: chartTheme.title,
+              font: { size: 12, weight: 600 },
+              padding: { bottom: 8 }
+            },
             ticks: { color: chartTheme.tick, stepSize: 0.25 }
           }
         },
@@ -97,7 +111,7 @@ export default function WaveformEditor({ points, onChange, onSaved, onToast }: P
             callbacks: {
               label: (context) => {
                 const point = context.raw as Point;
-                return `x ${point.x.toFixed(3)}, y ${point.y.toFixed(3)}`;
+                return `Cycle Position ${point.x.toFixed(3)}, Load ${point.y.toFixed(3)} (${Math.round(point.y * 100)}%)`;
               }
             }
           },
@@ -272,6 +286,7 @@ interface ChartTheme {
   point: string;
   pointBorder: string;
   tick: string;
+  title: string;
   tooltipBg: string;
   tooltipBorder: string;
   tooltipText: string;
@@ -303,6 +318,7 @@ function readChartTheme(): ChartTheme {
     point: cssVar("--chart-point", "#111827"),
     pointBorder: cssVar("--chart-point-border", "#ffffff"),
     tick: cssVar("--chart-tick", "#64748b"),
+    title: cssVar("--chart-title", "#1f2937"),
     tooltipBg: cssVar("--chart-tooltip-bg", "#111827"),
     tooltipBorder: cssVar("--chart-tooltip-border", "#2563eb"),
     tooltipText: cssVar("--chart-tooltip-text", "#ffffff")

@@ -28,6 +28,7 @@
   --chart-point: #111827;
   --chart-point-border: #ffffff;
   --chart-tick: #64748b;
+  --chart-title: #1f2937;
   --chart-tooltip-bg: #111827;
   --chart-tooltip-border: #2563eb;
   --chart-tooltip-text: #ffffff;
@@ -71,6 +72,7 @@
     --chart-point: #a7f3d0;
     --chart-point-border: #07111f;
     --chart-tick: #9fb0c7;
+    --chart-title: #d8e1ef;
     --chart-tooltip-bg: #020617;
     --chart-tooltip-border: #22d3ee;
     --chart-tooltip-text: #e5f8ff;
@@ -107,6 +109,7 @@
   --chart-point: #111827;
   --chart-point-border: #ffffff;
   --chart-tick: #64748b;
+  --chart-title: #1f2937;
   --chart-tooltip-bg: #111827;
   --chart-tooltip-border: #2563eb;
   --chart-tooltip-text: #ffffff;
@@ -142,6 +145,7 @@
   --chart-point: #a7f3d0;
   --chart-point-border: #07111f;
   --chart-tick: #9fb0c7;
+  --chart-title: #d8e1ef;
   --chart-tooltip-bg: #020617;
   --chart-tooltip-border: #22d3ee;
   --chart-tooltip-text: #e5f8ff;
