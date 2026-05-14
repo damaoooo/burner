@@ -14,6 +14,7 @@ from sampling_controller import (  # noqa: E402
     SamplingController,
     SamplingError,
     build_command,
+    reset_command,
     validate_sampling_ms,
 )
 
@@ -36,6 +37,14 @@ def test_build_command_injects_sampling_env():
     )
 
 
+def test_reset_command_cleans_main_repo_and_submodules():
+    command = reset_command()
+
+    assert "git reset --hard HEAD" in command
+    assert "git clean -fd" in command
+    assert "git submodule foreach --recursive" in command
+
+
 def test_sampling_controller_runs_reset_pull_scp_then_builds():
     async def run_test():
         config = FakeConfig()
@@ -52,7 +61,10 @@ def test_sampling_controller_runs_reset_pull_scp_then_builds():
 
         remote_commands = "\n".join(ssh.process_commands)
         assert "git reset --hard HEAD" in ssh.process_commands[0]
+        assert "git submodule foreach --recursive" in ssh.process_commands[0]
         assert "git pull --recurse-submodules" in ssh.process_commands[1]
+        assert "git submodule sync --recursive" in ssh.process_commands[2]
+        assert "git submodule update --init --recursive --force" in ssh.process_commands[2]
         assert "BURNER_CONTROL_INTERVAL_MS=250 bash scripts/build_lookbusy.sh" in remote_commands
         assert "BURNER_CONTROL_INTERVAL_MS=250 bash scripts/build_gpu_burn.sh" in remote_commands
         assert {item[1] for item in transfer.copies} == {

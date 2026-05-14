@@ -48,7 +48,11 @@ Clicking `Apply Sampling Time` targets all currently connected machines. For eac
 ```bash
 cd <remote workdir>
 git reset --hard HEAD
+git clean -fd
+git submodule foreach --recursive 'git reset --hard HEAD && git clean -fd'
 git pull --recurse-submodules
+git submodule sync --recursive
+git submodule update --init --recursive --force
 ```
 
 It then SCPs the local patched source/build files to the remote workdir and rebuilds:

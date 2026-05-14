@@ -182,7 +182,7 @@ class SamplingController:
         sampling_ms: int,
         has_gpu: bool,
     ) -> int:
-        steps = ["reset", "pull", "sync", "build_cpu"]
+        steps = ["reset", "pull", "submodules", "sync", "build_cpu"]
         if has_gpu:
             steps.append("build_gpu")
         total = len(steps)
@@ -192,7 +192,7 @@ class SamplingController:
                 machine_id,
                 sampling_ms,
                 step="reset",
-                command="git reset --hard HEAD",
+                command=reset_command(),
                 completed=0,
                 total=total,
             )
@@ -204,13 +204,21 @@ class SamplingController:
                 completed=1,
                 total=total,
             )
-            await self._sync_sources(machine_id, sampling_ms, completed=2, total=total)
+            await self._run_remote_step(
+                machine_id,
+                sampling_ms,
+                step="submodules",
+                command="git submodule sync --recursive && git submodule update --init --recursive --force",
+                completed=2,
+                total=total,
+            )
+            await self._sync_sources(machine_id, sampling_ms, completed=3, total=total)
             await self._run_remote_step(
                 machine_id,
                 sampling_ms,
                 step="build_cpu",
                 command=build_command(sampling_ms, "bash scripts/build_lookbusy.sh"),
-                completed=3,
+                completed=4,
                 total=total,
             )
             if has_gpu:
@@ -219,7 +227,7 @@ class SamplingController:
                     sampling_ms,
                     step="build_gpu",
                     command=build_command(sampling_ms, "bash scripts/build_gpu_burn.sh"),
-                    completed=4,
+                    completed=5,
                     total=total,
                 )
             await self._finish_machine(machine_id, sampling_ms, exit_code=0)
@@ -350,3 +358,11 @@ class SamplingController:
 def build_command(sampling_ms: int, command: str) -> str:
     sampling_ms = validate_sampling_ms(sampling_ms)
     return f"BURNER_CONTROL_INTERVAL_MS={sampling_ms} {command}"
+
+
+def reset_command() -> str:
+    return (
+        "git reset --hard HEAD && "
+        "git clean -fd && "
+        "git submodule foreach --recursive 'git reset --hard HEAD && git clean -fd'"
+    )

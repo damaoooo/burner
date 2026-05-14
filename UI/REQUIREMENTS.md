@@ -466,7 +466,7 @@ POST /api/sampling/apply
 - `sampling_ms`：整数，范围 `10` 到 `1000`，单位毫秒。
 - `machine_ids`：目标机器；前端传所有 connected 机器。
 - 若 sampling rebuild 正在运行，burn/update 请求返回 409。
-- 每台远端机器执行顺序固定为：`git reset --hard HEAD`、`git pull --recurse-submodules`、SCP 本地 patched 源码/构建脚本覆盖远端、`BURNER_CONTROL_INTERVAL_MS=<value> bash scripts/build_lookbusy.sh`、有 GPU 时执行 `BURNER_CONTROL_INTERVAL_MS=<value> bash scripts/build_gpu_burn.sh`。
+- 每台远端机器执行顺序固定为：主仓库 `git reset --hard HEAD` + `git clean -fd`、所有 submodule `git reset --hard HEAD` + `git clean -fd`、`git pull --recurse-submodules`、`git submodule sync --recursive`、`git submodule update --init --recursive --force`、SCP 本地 patched 源码/构建脚本覆盖远端、`BURNER_CONTROL_INTERVAL_MS=<value> bash scripts/build_lookbusy.sh`、有 GPU 时执行 `BURNER_CONTROL_INTERVAL_MS=<value> bash scripts/build_gpu_burn.sh`。
 
 ---
 
