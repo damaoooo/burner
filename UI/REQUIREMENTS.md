@@ -202,8 +202,9 @@ if start_time_utc:  # ISO 格式: "2026-05-12T10:00:05Z"
 burner_cmd = " ".join(burner_args)
 nohup_cmd = f"nohup {burner_cmd} > /tmp/burner_{machine_id}.log 2>&1 & echo $!"
 
-# 用 conda run 包裹（解决非交互式 SSH 不激活 conda 的问题）
-full_cmd = f"conda run -n {conda_env} bash -c '{nohup_cmd}'"
+# 优先使用 <conda root>/envs/<env>/bin 直接启动，降低 realtime 多机器启动偏差；
+# 找不到环境路径时再 fallback 到 conda run。
+full_cmd = conda_env_path_command(conda_env, nohup_cmd)
 ```
 
 执行后从 stdout 读取 PID，存入 `job_registry: dict[machine_id, JobInfo]`。

@@ -79,3 +79,7 @@ git submodule update --init --recursive --force
 ```
 
 It then rebuilds CPU support and, when GPU hardware is detected, GPU support.
+
+## Burn Launch Path
+
+The per-machine burn action starts `./burner` through the configured Conda environment, but it prefers the environment `bin/` directory directly instead of `conda run`. This avoids per-machine `conda run` startup overhead during realtime starts. If the environment path cannot be found, it falls back to `conda run`.

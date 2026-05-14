@@ -13,7 +13,7 @@ from typing import Literal
 
 from config import ConfigStore
 from file_transfer import FileTransfer
-from remote_shell import conda_run_command
+from remote_shell import conda_env_path_command
 from ssh_manager import SSHManager
 from waveform_store import WaveformStore
 
@@ -249,7 +249,7 @@ class BurnController:
             f"cd {shlex.quote(machine.workdir)} || exit 1; "
             f"nohup {burner_cmd} > {shlex.quote(log_path)} 2>&1 & echo $!"
         )
-        full_cmd = conda_run_command(machine.conda_env, inner)
+        full_cmd = conda_env_path_command(machine.conda_env, inner)
         stdout, stderr, exit_code = await self._ssh.run_command(target.id, full_cmd)
         if exit_code != 0:
             raise BurnError(f"{target.id}: failed to start burner: {stderr.strip()}")
