@@ -25,6 +25,9 @@ class BurnEvent:
 class BurnBackend:
     name = "backend"
 
+    def prepare(self, intensity: float = 0.0) -> None:
+        del intensity
+
     def set_intensity(self, intensity: float, elapsed: float) -> None:
         raise NotImplementedError
 
@@ -64,6 +67,9 @@ class LookbusyCpuBackend(BurnBackend):
         self._ensure_started(intensity)
         assert self._control_file is not None
         self._control_file.write_text(f"{intensity * 100.0:.6f}\n", encoding="utf-8")
+
+    def prepare(self, intensity: float = 0.0) -> None:
+        self._ensure_started(intensity)
 
     def stop(self) -> None:
         if self._process is not None and self._process.poll() is None:
@@ -128,6 +134,9 @@ class DutyCycleGpuBackend(BurnBackend):
         self._ensure_started(intensity)
         assert self._control_file is not None
         self._control_file.write_text(f"{intensity * 100.0:.6f}\n", encoding="utf-8")
+
+    def prepare(self, intensity: float = 0.0) -> None:
+        self._ensure_started(intensity)
 
     def stop(self) -> None:
         if self._process is not None and self._process.poll() is None:

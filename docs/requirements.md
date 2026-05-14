@@ -111,6 +111,7 @@ x,y
 
 - 默认调度 tick 为 `0.1s`；WebUI 会将已应用的采样时间作为 `--tick` 传给 burner。
 - 每个 tick 根据当前 elapsed time 计算目标强度。
+- 使用 `--start` 时，burner 会在计划启动时间前短暂以 0% load 预热 backend，降低 GPU 初始化造成的启动偏差。
 - patched CPU/GPU 后端默认以 `100ms` 控制窗口读取外部 util 文件；可通过 `BURNER_CONTROL_INTERVAL_MS=<10-1000>` 重新编译调整。
 - 强度 `0` 表示不 burn。
 - 强度 `1` 表示 100% burn。

@@ -41,6 +41,7 @@ The curve file has no header and exactly two columns:
 - Supported duration units are `s`, `m`, and `h`, for example `20s`, `30m`, `1h`.
 - The default scheduler tick is `0.1s`.
 - `--tick` controls how often `burner` recalculates and writes the target intensity. The WebUI sends the currently applied sampling time as this value.
+- When `--start` is used, selected backends are prewarmed at 0% load shortly before the scheduled start time to reduce backend initialization skew.
 
 ## Backends
 

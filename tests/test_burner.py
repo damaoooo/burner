@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 import warpper.burner_backends as burner_backends
-from warpper.burner_cli import DEFAULT_TICK, build_parser
+from warpper.burner_cli import DEFAULT_PREWARM_SECONDS, DEFAULT_TICK, build_parser
 from warpper.burner_core import generate_schedule, run_schedule
 from warpper.burner_backends import DutyCycleGpuBackend, MockBurnBackend
 from warpper.curve import LoadCurve
@@ -47,6 +47,7 @@ def test_burner_cli_default_tick_is_100ms():
 
     assert DEFAULT_TICK == pytest.approx(0.1)
     assert args.tick == pytest.approx(0.1)
+    assert args.prewarm_seconds == pytest.approx(DEFAULT_PREWARM_SECONDS)
 
 
 def test_run_schedule_updates_all_backends_and_stops(tmp_path):
@@ -176,6 +177,30 @@ def test_gpu_backend_starts_all_gpus_with_shared_util_file(tmp_path, monkeypatch
     assert calls["command"][7] == "86400"
     assert "-i" not in calls["command"]
     assert calls["kwargs"]["cwd"] == str(tmp_path)
+
+
+def test_gpu_backend_prepare_starts_with_zero_util(tmp_path, monkeypatch):
+    binary = tmp_path / "gpu_burn"
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+
+    class FakeProcess:
+        pid = 123
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(
+        burner_backends.subprocess,
+        "Popen",
+        lambda command, **kwargs: FakeProcess(),
+    )
+    monkeypatch.setattr(burner_backends, "_terminate_process_group", lambda process: None)
+
+    backend = DutyCycleGpuBackend(binary=binary)
+    backend.prepare()
+    assert backend._control_file is not None
+    assert backend._control_file.read_text(encoding="utf-8") == "0.000000\n"
+    backend.stop()
 
 
 def test_cpu_backend_writes_initial_intensity_before_start(tmp_path, monkeypatch):

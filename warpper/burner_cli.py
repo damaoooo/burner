@@ -4,7 +4,7 @@ import argparse
 import signal
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .burner_backends import (
@@ -19,6 +19,7 @@ from .timeutil import parse_duration, parse_period_duration, parse_utc_start
 
 
 DEFAULT_TICK = 0.1
+DEFAULT_PREWARM_SECONDS = 2.0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -33,6 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mock-backend", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-sleep", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--log-schedule", help=argparse.SUPPRESS)
+    parser.add_argument("--prewarm-seconds", type=float, default=DEFAULT_PREWARM_SECONDS, help=argparse.SUPPRESS)
     return parser
 
 
@@ -48,6 +50,8 @@ def main(argv: list[str] | None = None) -> int:
         period = parse_period_duration(args.period)
         if args.tick <= 0:
             raise ValueError("tick must be greater than 0")
+        if args.prewarm_seconds < 0:
+            raise ValueError("prewarm seconds must be non-negative")
         curve = LoadCurve.from_csv(args.file)
         start_time = parse_utc_start(args.start) if args.start else None
     except (CurveFormatError, OSError, ValueError) as exc:
@@ -57,8 +61,13 @@ def main(argv: list[str] | None = None) -> int:
     backends = _build_backends(args)
     _install_signal_handlers()
 
+    prepared = False
     try:
         if start_time is not None and not args.no_sleep:
+            if args.prewarm_seconds > 0:
+                _wait_until(start_time - timedelta(seconds=args.prewarm_seconds))
+                _prepare_backends(backends)
+                prepared = True
             _wait_until(start_time)
         run_schedule(
             curve=curve,
@@ -78,6 +87,10 @@ def main(argv: list[str] | None = None) -> int:
     except BackendError as exc:
         print(f"burner: {exc}", file=sys.stderr)
         return 1
+    finally:
+        if prepared:
+            for backend in backends:
+                backend.stop()
 
     return 0
 
@@ -97,6 +110,18 @@ def _wait_until(start_time: datetime) -> None:
         if remaining <= 0:
             return
         time.sleep(min(remaining, 1.0))
+
+
+def _prepare_backends(backends) -> None:
+    prepared = []
+    try:
+        for backend in backends:
+            backend.prepare(0.0)
+            prepared.append(backend)
+    except Exception:
+        for backend in prepared:
+            backend.stop()
+        raise
 
 
 def _install_signal_handlers() -> None:

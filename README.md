@@ -85,6 +85,8 @@ At least one of `--cpu` or `--gpu` is required. If both are provided, CPU and GP
 
 When `--gpu` is used, all CUDA GPUs are burned by default. The same curve target is written to one shared control file, so an intensity of `1.0` means every detected GPU is driven toward 100% burn.
 
+When `--start` is used, `burner` prewarms the selected backends at 0% load shortly before the scheduled start time. This reduces start-time skew from backend initialization, especially for GPU burn.
+
 The CPU and GPU patched backends check their utilization control files at `100ms` granularity by default. Rebuild with `BURNER_CONTROL_INTERVAL_MS=<10-1000>` to change that backend control interval; the WebUI sampling-time apply flow does this on connected remote machines.
 
 ## Curve CSV Format
