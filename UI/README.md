@@ -16,7 +16,7 @@ http://localhost:18080
 
 If you do not set `BURNER_UI_PORT`, the script uses port `8000`.
 
-In the SLURM allocation panel, `Sample / UI Refresh (ms)` defaults to `50`. This controls how often workers publish latest load metrics and how often the UI polls them. CSV sample files are decimated to about once per second to keep shared filesystem writes bounded.
+In the SLURM allocation panel, `Sample / UI Refresh (ms)` defaults to `200`. This controls how often workers publish latest load metrics and how often the UI polls them. CSV sample files are decimated to about once per second to keep shared filesystem writes bounded.
 
 Optional environment variables:
 

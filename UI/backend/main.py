@@ -24,7 +24,7 @@ class SlurmSubmitPayload(BaseModel):
     nodes: int
     time_limit: str
     poll_ms: int = 10
-    sample_ms: int = 50
+    sample_ms: int = 200
 
 
 class BurnMachinePayload(BaseModel):

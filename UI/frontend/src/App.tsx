@@ -230,7 +230,7 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
-    window.localStorage.setItem("burner-ui-refresh-ms-v2", String(refreshMs));
+    window.localStorage.setItem("burner-ui-refresh-ms-v3", String(refreshMs));
   }, [refreshMs]);
 
   useEffect(() => {
@@ -396,7 +396,7 @@ function getInitialTheme(): ThemeMode {
 }
 
 function getInitialRefreshMs(): number {
-  const raw = window.localStorage.getItem("burner-ui-refresh-ms-v2");
-  const parsed = raw ? Number(raw) : 50;
-  return Number.isInteger(parsed) && parsed >= 30 && parsed <= 10000 ? parsed : 50;
+  const raw = window.localStorage.getItem("burner-ui-refresh-ms-v3");
+  const parsed = raw ? Number(raw) : 200;
+  return Number.isInteger(parsed) && parsed >= 30 && parsed <= 10000 ? parsed : 200;
 }
