@@ -1,22 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
-import {
-  CategoryScale,
-  Chart as ChartJS,
-  LinearScale,
-  LineElement,
-  PointElement,
-  Tooltip,
-  type ChartData,
-  type ChartOptions
-} from "chart.js";
-import { Line } from "react-chartjs-2";
+import { useEffect, useState } from "react";
+import TelemetryLineChart from "./TelemetryLineChart";
 import { useAppState } from "../state/AppState";
 import type { MachineState } from "../types";
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip);
-
 interface Props {
   machine: MachineState;
+  showPowerChart: boolean;
 }
 
 interface PowerPoint {
@@ -25,26 +14,13 @@ interface PowerPoint {
   watts: number;
 }
 
-interface ChartTheme {
-  axis: string;
-  grid: string;
-  line: string;
-  point: string;
-  pointBorder: string;
-  tick: string;
-  tooltipBg: string;
-  tooltipBorder: string;
-  tooltipText: string;
-}
-
-export default function MachineCard({ machine }: Props) {
+export default function MachineCard({ machine, showPowerChart }: Props) {
   const { state } = useAppState();
   const machineJobs = Object.values(state.burnJobs).filter((job) => job.machine_id === machine.config.id);
   const isBurning = machineJobs.length > 0;
   const activeJobKey = machineJobs.map((job) => job.job_id).sort().join(",");
   const hw = machine.hwInfo;
   const latestPower = hw?.latest_power;
-  const chartTheme = useChartTheme();
   const [powerHistory, setPowerHistory] = useState<PowerPoint[]>([]);
   const displayWatts =
     latestPower?.cpu_watts_display ?? latestPower?.cpu_watts ?? latestPower?.cpu_watts_estimated ?? null;
@@ -70,73 +46,9 @@ export default function MachineCard({ machine }: Props) {
           watts: displayWatts
         }
       ];
-      return next.slice(-90);
+      return next.slice(-60);
     });
   }, [displayWatts, latestPower?.timestamp]);
-
-  const chartData = useMemo<ChartData<"line", number[], string>>(
-    () => ({
-      labels: powerHistory.map((point) => point.label),
-      datasets: [
-        {
-          label: latestPower?.cpu_watts_source === "rapl" ? "CPU Power" : "Estimated CPU Power",
-          data: powerHistory.map((point) => point.watts),
-          borderColor: chartTheme.line,
-          backgroundColor: chartTheme.line,
-          pointBackgroundColor: chartTheme.point,
-          pointBorderColor: chartTheme.pointBorder,
-          pointRadius: 0,
-          pointHoverRadius: 3,
-          borderWidth: 2,
-          tension: 0.25
-        }
-      ]
-    }),
-    [chartTheme, latestPower?.cpu_watts_source, powerHistory]
-  );
-
-  const chartOptions = useMemo<ChartOptions<"line">>(
-    () => ({
-      responsive: true,
-      maintainAspectRatio: false,
-      animation: false,
-      scales: {
-        x: {
-          border: { color: chartTheme.axis },
-          grid: { display: false },
-          ticks: {
-            color: chartTheme.tick,
-            maxRotation: 0,
-            autoSkip: true,
-            maxTicksLimit: 4
-          }
-        },
-        y: {
-          beginAtZero: true,
-          suggestedMax: Math.max(hw?.cpu_tdp_total_watts ?? machine.config.cpu_tdp ?? 1, 1),
-          border: { color: chartTheme.axis },
-          grid: { color: chartTheme.grid },
-          ticks: {
-            color: chartTheme.tick,
-            callback: (value) => `${value} W`
-          }
-        }
-      },
-      plugins: {
-        tooltip: {
-          backgroundColor: chartTheme.tooltipBg,
-          bodyColor: chartTheme.tooltipText,
-          borderColor: chartTheme.tooltipBorder,
-          borderWidth: 1,
-          titleColor: chartTheme.tooltipText,
-          callbacks: {
-            label: (context) => `${Number(context.parsed.y ?? 0).toFixed(1)} W`
-          }
-        }
-      }
-    }),
-    [chartTheme, hw?.cpu_tdp_total_watts, machine.config.cpu_tdp]
-  );
 
   return (
     <article className={`machine-card ${isBurning ? "burning" : ""}`}>
@@ -204,19 +116,21 @@ export default function MachineCard({ machine }: Props) {
         </div>
       </div>
 
-      <div className="power-chart-panel">
-        <div className="power-chart-header">
-          <span>{latestPower?.cpu_watts_source === "rapl" ? "CPU Power" : "Estimated CPU Power"}</span>
-          <span>{powerHistory.length ? `${powerHistory.length} samples` : "waiting"}</span>
+      {showPowerChart && (
+        <div className="power-chart-panel">
+          <div className="power-chart-header">
+            <span>{latestPower?.cpu_watts_source === "rapl" ? "CPU Power" : "Estimated CPU Power"}</span>
+            <span>{powerHistory.length ? `${powerHistory.length} samples` : "waiting"}</span>
+          </div>
+          <div className="power-chart">
+            <TelemetryLineChart
+              points={powerHistory.map((point) => ({ label: point.label, value: point.watts }))}
+              yMax={Math.max(hw?.cpu_tdp_total_watts ?? machine.config.cpu_tdp ?? 1, 1)}
+              yAxisLabel={latestPower?.cpu_watts_source === "rapl" ? "CPU Power (W)" : "Estimated CPU Power (W)"}
+            />
+          </div>
         </div>
-        <div className="power-chart">
-          {powerHistory.length > 1 ? (
-            <Line data={chartData} options={chartOptions} />
-          ) : (
-            <div className="power-chart-empty">Waiting for watcher samples</div>
-          )}
-        </div>
-      </div>
+      )}
 
       <div className="machine-options">
         <label className="toggle-row">
@@ -274,40 +188,4 @@ function formatTimeLabel(timestamp: string): string {
     return timestamp;
   }
   return date.toLocaleTimeString([], { hour12: false, minute: "2-digit", second: "2-digit" });
-}
-
-function useChartTheme(): ChartTheme {
-  const [theme, setTheme] = useState<ChartTheme>(() => readChartTheme());
-
-  useEffect(() => {
-    const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const update = () => setTheme(readChartTheme());
-    update();
-    media.addEventListener("change", update);
-    window.addEventListener("burner-theme-change", update);
-    return () => {
-      media.removeEventListener("change", update);
-      window.removeEventListener("burner-theme-change", update);
-    };
-  }, []);
-
-  return theme;
-}
-
-function readChartTheme(): ChartTheme {
-  return {
-    axis: cssVar("--chart-axis", "#aab3c2"),
-    grid: cssVar("--chart-grid", "#d8dee8"),
-    line: cssVar("--chart-line", "#2563eb"),
-    point: cssVar("--chart-point", "#111827"),
-    pointBorder: cssVar("--chart-point-border", "#ffffff"),
-    tick: cssVar("--chart-tick", "#64748b"),
-    tooltipBg: cssVar("--chart-tooltip-bg", "#111827"),
-    tooltipBorder: cssVar("--chart-tooltip-border", "#2563eb"),
-    tooltipText: cssVar("--chart-tooltip-text", "#ffffff")
-  };
-}
-
-function cssVar(name: string, fallback: string): string {
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
 }

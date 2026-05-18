@@ -218,6 +218,7 @@ export default function App() {
     () => machines.reduce((total, machine) => total + (machine.hwInfo?.gpus.length ?? 0), 0),
     [machines]
   );
+  const showMachinePowerCharts = machines.length <= 48;
   const activeJobs = Object.values(state.burnJobs).filter(
     (job) => job.started_at <= Date.now() / 1000 && Date.now() / 1000 < job.started_at + job.duration_seconds
   ).length;
@@ -311,7 +312,7 @@ export default function App() {
           ) : (
             <div className="machine-grid">
               {machines.map((machine) => (
-                <MachineCard key={machine.config.id} machine={machine} />
+                <MachineCard key={machine.config.id} machine={machine} showPowerChart={showMachinePowerCharts} />
               ))}
             </div>
           )}
