@@ -43,6 +43,7 @@ export type Action =
     }
   | { type: "samplingBuildComplete"; samplingMs: number; exitCode: number; message?: string }
   | { type: "samplingBuildFailedToStart"; message: string }
+  | { type: "setBurnJobs"; jobs: JobInfo[] }
   | { type: "burnStarted"; job: JobInfo }
   | { type: "burnStopped"; jobId?: string; machineId?: string }
   | { type: "clearUpdateLog"; machineId: string }
@@ -99,10 +100,11 @@ export function reducer(state: AppState, action: Action): AppState {
           },
           connectionStatus: record.connection_status,
           errorMessage: record.error_message ?? undefined,
+          workerStatus: record.worker_status,
           hwInfo: record.hw_info ?? previous?.hwInfo,
           burnEnabled: previous?.burnEnabled ?? true,
           burnCpu: previous?.burnCpu ?? true,
-          burnGpu: previous?.burnGpu ?? true,
+          burnGpu: false,
           delaySeconds: previous?.delaySeconds ?? 0
         };
         if (record.job) {
@@ -328,6 +330,11 @@ export function reducer(state: AppState, action: Action): AppState {
             }
           }
         }
+      };
+    case "setBurnJobs":
+      return {
+        ...state,
+        burnJobs: Object.fromEntries(action.jobs.map((job) => [job.job_id, job]))
       };
     case "burnStarted":
       return {

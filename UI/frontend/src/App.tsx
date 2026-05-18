@@ -1,17 +1,19 @@
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import AllocationPanel from "./components/AllocationPanel";
 import BurnPanel from "./components/BurnPanel";
 import GlobalBurnBar from "./components/GlobalBurnBar";
 import MachineCard from "./components/MachineCard";
 import SchedulePanel from "./components/SchedulePanel";
 import {
   extractErrorMessage,
+  fetchAllocation,
   fetchBurnStatus,
   fetchMachines,
   fetchWaveforms,
   openEventSocket
 } from "./api/client";
 import { AppStateContext, initialState, reducer } from "./state/AppState";
-import type { WsEvent } from "./types";
+import type { SlurmAllocation, WsEvent } from "./types";
 
 interface Toast {
   id: number;
@@ -23,6 +25,7 @@ type ThemeMode = "light" | "dark";
 
 export default function App() {
   const [state, dispatch] = useReducer(reducer, initialState);
+  const [allocation, setAllocation] = useState<SlurmAllocation>({ active: false, status: "none", nodes: [] });
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [theme, setTheme] = useState<ThemeMode>(() => getInitialTheme());
 
@@ -35,6 +38,10 @@ export default function App() {
   }, []);
 
   const handleWsEvent = useCallback((event: WsEvent) => {
+    if (event.event === "allocation_changed") {
+      setAllocation(event);
+      return;
+    }
     if (event.event === "machine_status") {
       dispatch({
         type: "setMachineStatus",
@@ -135,21 +142,34 @@ export default function App() {
           fetchWaveforms(),
           fetchBurnStatus()
         ]);
+        const currentAllocation = await fetchAllocation();
+        setAllocation(currentAllocation);
         dispatch({ type: "setMachines", machines });
         dispatch({ type: "setWaveforms", waveforms });
         const preferred = waveforms.find((waveform) => waveform.name === "sine") ?? waveforms[0];
         if (preferred) {
           dispatch({ type: "setGlobalWaveform", points: preferred.points, name: preferred.name });
         }
-        jobs.forEach((job) => {
-          dispatch({ type: "burnStarted", job });
-        });
+        dispatch({ type: "setBurnJobs", jobs });
       } catch (error) {
         addToast(extractErrorMessage(error), "error");
       }
     }
     void load();
   }, [addToast]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void Promise.all([fetchMachines(), fetchBurnStatus(), fetchAllocation()])
+        .then(([machines, jobs, currentAllocation]) => {
+          dispatch({ type: "setMachines", machines });
+          dispatch({ type: "setBurnJobs", jobs });
+          setAllocation(currentAllocation);
+        })
+        .catch(() => undefined);
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     return openEventSocket(
@@ -201,7 +221,7 @@ export default function App() {
           <div className="brand-lockup">
             <span className="eyebrow">POWER LAB</span>
             <h1>Burner Control Deck</h1>
-            <p>Remote CPU / GPU power load orchestration</p>
+            <p>Shaheen SLURM CPU load orchestration</p>
           </div>
           <div className="header-actions">
             <div className="header-controls">
@@ -228,11 +248,13 @@ export default function App() {
         </header>
 
         <section className="status-deck" aria-label="system status">
-          <StatusTile label="Machines" value={machines.length} detail={`${selectedCount} enabled`} />
-          <StatusTile label="Connected" value={connectedCount} detail={state.wsConnected ? "websocket live" : "reconnecting"} />
-          <StatusTile label="GPU Inventory" value={gpuCount} detail="detected devices" />
+          <StatusTile label="Allocation" value={allocation.nodes_requested ?? 0} detail={allocation.job_id ? `job ${allocation.job_id}` : "none"} />
+          <StatusTile label="Ready Nodes" value={connectedCount} detail={`${allocation.nodes_ready ?? 0}/${allocation.nodes_requested ?? 0} workers`} />
+          <StatusTile label="GPU Inventory" value={gpuCount} detail="Shaheen CPU-only" />
           <StatusTile label="Active Jobs" value={activeJobs} detail={scheduledJobs > 0 ? `${scheduledJobs} scheduled` : "idle"} />
         </section>
+
+        <AllocationPanel allocation={allocation} onAllocationChange={setAllocation} onToast={addToast} />
 
         <SchedulePanel onToast={addToast} />
 
@@ -241,16 +263,16 @@ export default function App() {
         <section className="machine-section">
           <div className="section-heading">
             <h2>Machines</h2>
-            <span className="muted">{machines.length} configured</span>
+            <span className="muted">{machines.length} allocated</span>
           </div>
           {machines.length === 0 ? (
             <div className="empty-state">
-              Add machines in <code>UI/machines.json</code>, then refresh this page.
+              Submit a SLURM allocation to start workers and populate node information.
             </div>
           ) : (
             <div className="machine-grid">
               {machines.map((machine) => (
-                <MachineCard key={machine.config.id} machine={machine} onToast={addToast} />
+                <MachineCard key={machine.config.id} machine={machine} />
               ))}
             </div>
           )}

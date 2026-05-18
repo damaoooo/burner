@@ -34,8 +34,8 @@ export default function GlobalBurnBar({ onToast }: Props) {
   const scheduledCount = jobs.filter((job) => job.started_at > progressNow).length;
   const hasJobs = jobs.length > 0;
   const parsedSamplingMs = parseSamplingMs(state.samplingMs);
-  const samplingDirty = parsedSamplingMs !== undefined && parsedSamplingMs !== state.appliedSamplingMs;
-  const startDisabled = state.samplingBuild.running || parsedSamplingMs === undefined || samplingDirty;
+  const readyMachines = Object.values(state.machines).filter((machine) => machine.connectionStatus === "connected");
+  const startDisabled = parsedSamplingMs === undefined || readyMachines.length === 0;
 
   useEffect(() => {
     if (activeJobs.length > 0 && progressStartedAt === null) {
@@ -69,11 +69,7 @@ export default function GlobalBurnBar({ onToast }: Props) {
       return;
     }
     if (parsedSamplingMs === undefined) {
-      onToast("Sampling time must be an integer from 10 to 1000 ms.", "error");
-      return;
-    }
-    if (samplingDirty) {
-      onToast("Apply the sampling time before starting burn.", "error");
+      onToast("Worker polling must be an integer from 10 to 1000 ms.", "error");
       return;
     }
     const plan = buildPendingStart();
@@ -96,11 +92,9 @@ export default function GlobalBurnBar({ onToast }: Props) {
   }
 
   function buildPendingStart(): PendingStart | undefined {
-    const selected = Object.values(state.machines).filter(
-      (machine) => machine.burnEnabled && machine.connectionStatus === "connected"
-    );
+    const selected = Object.values(state.machines).filter((machine) => machine.connectionStatus === "connected");
     if (selected.length === 0) {
-      onToast("Select at least one connected machine.", "error");
+      onToast("Wait for the SLURM workers to become ready.", "error");
       return undefined;
     }
 
@@ -135,10 +129,10 @@ export default function GlobalBurnBar({ onToast }: Props) {
         : state.globalWaveformName;
       return {
         id: machine.config.id,
-        enabled: machine.burnEnabled,
-        burn_cpu: machine.burnCpu,
-        burn_gpu: machine.burnGpu,
-        delay_seconds: syncMode === "immediate" ? 0 : Math.max(0, machine.delaySeconds),
+        enabled: true,
+        burn_cpu: true,
+        burn_gpu: false,
+        delay_seconds: 0,
         waveform_name: waveformName
       };
     });
@@ -147,20 +141,15 @@ export default function GlobalBurnBar({ onToast }: Props) {
       onToast("Select or save a waveform first.", "error");
       return undefined;
     }
-    if (machines.some((machine) => !machine.burn_cpu && !machine.burn_gpu)) {
-      onToast("Every enabled machine must burn CPU or GPU.", "error");
-      return undefined;
-    }
-
     const planned = selected.map((machine, index) => {
       const request = machines[index];
-      const start = baseStart + request.delay_seconds;
+      const start = baseStart;
       return {
         machineId: machine.config.id,
         machineName: machine.config.name,
         start,
         end: start + durationSeconds,
-        delaySeconds: request.delay_seconds,
+        delaySeconds: 0,
         waveformName: request.waveform_name
       };
     });
@@ -171,7 +160,7 @@ export default function GlobalBurnBar({ onToast }: Props) {
         start_time_utc: startTimeUtc,
         duration: `${durationSeconds}s`,
         period,
-        tick_seconds: state.appliedSamplingMs / 1000,
+        tick_seconds: (parsedSamplingMs ?? 100) / 1000,
         machines
       },
       planned
@@ -208,10 +197,10 @@ export default function GlobalBurnBar({ onToast }: Props) {
           type="button"
           className="burn-button"
           disabled={startDisabled}
-          title={startDisabled ? disabledReason(state.samplingBuild.running, parsedSamplingMs, samplingDirty) : undefined}
+          title={startDisabled ? disabledReason(parsedSamplingMs, readyMachines.length) : undefined}
           onClick={() => void handleStart()}
         >
-          {state.samplingBuild.running ? "Compiling" : samplingDirty ? "Apply Sampling" : "Start Burn"}
+          Start Burn
         </button>
         {activeJobs.length > 0 ? (
           <>
@@ -357,11 +346,11 @@ function baseStartSeconds(syncMode: string, scheduledLocal: string): number | un
   return parsed / 1000;
 }
 
-function requestSyncMode(runMode: RunMode, selected: MachineState[]): SyncMode {
+function requestSyncMode(runMode: RunMode, _selected: MachineState[]): SyncMode {
   if (runMode === "schedule") {
     return "scheduled";
   }
-  return selected.some((machine) => Math.max(0, machine.delaySeconds) > 0) ? "delayed" : "immediate";
+  return "immediate";
 }
 
 function parseSamplingMs(value: string): number | undefined {
@@ -376,15 +365,12 @@ function parseSamplingMs(value: string): number | undefined {
   return amount;
 }
 
-function disabledReason(running: boolean, parsedSamplingMs: number | undefined, dirty: boolean): string {
-  if (running) {
-    return "Sampling rebuild is running";
-  }
+function disabledReason(parsedSamplingMs: number | undefined, readyCount: number): string {
   if (parsedSamplingMs === undefined) {
-    return "Sampling time must be 10-1000 ms";
+    return "Worker polling must be 10-1000 ms";
   }
-  if (dirty) {
-    return "Apply sampling time first";
+  if (readyCount === 0) {
+    return "No ready SLURM workers";
   }
   return "";
 }

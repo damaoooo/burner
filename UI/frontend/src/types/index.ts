@@ -32,11 +32,23 @@ export interface HwInfo {
   cpu_tdp: number;
   gpu_tdp: number;
   gpus: GpuInfo[];
+  cpu_count?: number;
+  memory_total_gb?: number;
+  ip_address?: string;
+  slurm_node?: string;
+  worker_status?: string;
+  last_heartbeat?: string;
+  latest_power?: {
+    timestamp?: string;
+    cpu_watts?: number | null;
+    status?: string;
+  } | null;
 }
 
 export interface MachineApiRecord extends MachineConfig {
   connection_status: ConnectionStatus;
   error_message?: string | null;
+  worker_status?: string;
   hw_info?: HwInfo | null;
   job?: JobInfo | null;
 }
@@ -45,6 +57,7 @@ export interface MachineState {
   config: MachineConfig;
   connectionStatus: ConnectionStatus;
   errorMessage?: string;
+  workerStatus?: string;
   hwInfo?: HwInfo;
   burnEnabled: boolean;
   burnCpu: boolean;
@@ -111,7 +124,24 @@ export interface SamplingBuildState {
   message?: string;
 }
 
+export interface SlurmAllocation {
+  active: boolean;
+  status: string;
+  session_id?: string;
+  job_id?: string;
+  session_dir?: string;
+  nodes_requested?: number;
+  nodes_ready?: number;
+  poll_ms?: number;
+  time_limit?: string;
+  created_at?: number;
+  nodes?: MachineApiRecord[];
+}
+
 export type WsEvent =
+  | ({
+      event: "allocation_changed";
+    } & SlurmAllocation)
   | {
       event: "machine_status";
       id: string;

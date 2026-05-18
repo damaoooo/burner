@@ -3,3 +3,8 @@ uvicorn[standard]
 asyncssh
 python-multipart
 pydantic
+# Shaheen /etc/profile.local invokes update_last_login with env python3.
+mysql-connector-python
+# Optional preferred SLURM backend on Shaheen.
+# Install only when matching Slurm headers are available:
+# pyslurm @ git+https://github.com/PySlurm/pyslurm.git@v24.11.0

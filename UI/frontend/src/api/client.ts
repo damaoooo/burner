@@ -4,6 +4,7 @@ import type {
   JobInfo,
   MachineApiRecord,
   Point,
+  SlurmAllocation,
   WaveformInfo,
   WsEvent
 } from "../types";
@@ -82,6 +83,25 @@ export async function stopJobs(jobIds: string[] | "all"): Promise<void> {
 
 export async function fetchBurnStatus(): Promise<JobInfo[]> {
   const { data } = await http.get<JobInfo[]>("/burn/status");
+  return data;
+}
+
+export async function fetchAllocation(): Promise<SlurmAllocation> {
+  const { data } = await http.get<SlurmAllocation>("/slurm/allocation");
+  return data;
+}
+
+export async function submitAllocation(nodes: number, timeLimit: string, pollMs: number): Promise<SlurmAllocation> {
+  const { data } = await http.post<SlurmAllocation>("/slurm/submit", {
+    nodes,
+    time_limit: timeLimit,
+    poll_ms: pollMs
+  });
+  return data;
+}
+
+export async function releaseAllocation(): Promise<SlurmAllocation> {
+  const { data } = await http.post<SlurmAllocation>("/slurm/release");
   return data;
 }
 

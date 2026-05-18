@@ -475,10 +475,52 @@ button:disabled {
   font-size: 13px;
 }
 
+.allocation-panel,
 .control-band,
 .machine-section,
 .schedule-section {
   padding: 18px 0;
+}
+
+.allocation-panel {
+  display: grid;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.allocation-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 140px) minmax(0, 180px) minmax(0, 180px) auto;
+  gap: 12px;
+  align-items: end;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  background: color-mix(in srgb, var(--panel) 95%, transparent);
+  box-shadow: var(--shadow-soft);
+}
+
+.allocation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.allocation-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.allocation-status span {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 5px 9px;
+  background: var(--panel-strong);
+  color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .control-grid {
@@ -588,6 +630,10 @@ button:disabled {
   gap: 8px;
   align-items: center;
   color: var(--text-soft);
+}
+
+.disabled-row {
+  opacity: 0.65;
 }
 
 .waveform-editor {
