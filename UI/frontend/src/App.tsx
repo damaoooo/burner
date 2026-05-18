@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import AllocationPanel from "./components/AllocationPanel";
 import BurnPanel from "./components/BurnPanel";
+import ClusterPowerChart from "./components/ClusterPowerChart";
 import GlobalBurnBar from "./components/GlobalBurnBar";
 import MachineCard from "./components/MachineCard";
 import SchedulePanel from "./components/SchedulePanel";
@@ -283,6 +284,8 @@ export default function App() {
           <StatusTile label="GPU Inventory" value={gpuCount} detail="Shaheen CPU-only" />
           <StatusTile label="Active Jobs" value={activeJobs} detail={scheduledJobs > 0 ? `${scheduledJobs} scheduled` : "idle"} />
         </section>
+
+        <ClusterPowerChart machines={machines} />
 
         <AllocationPanel
           allocation={allocation}

@@ -454,6 +454,40 @@ button:disabled {
   text-transform: none;
 }
 
+.cluster-power-panel {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  background: var(--panel);
+  box-shadow: var(--shadow-soft);
+}
+
+.cluster-power-panel .section-heading {
+  margin-bottom: 0;
+}
+
+.cluster-power-panel h2 {
+  margin: 0 0 4px;
+}
+
+.cluster-power-panel strong {
+  color: var(--text);
+  font-size: 26px;
+}
+
+.cluster-power-chart {
+  position: relative;
+  height: 260px;
+  min-height: 260px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--panel-strong);
+}
+
 .progress-track {
   height: 10px;
   overflow: hidden;
