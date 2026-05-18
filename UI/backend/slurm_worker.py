@@ -17,7 +17,9 @@ from typing import Any
 UTC = timezone.utc
 DEFAULT_POLL_MS = 10
 HEARTBEAT_SECONDS = 1.0
-WATCHER_SECONDS = 1.0
+DEFAULT_SAMPLE_MS = 30
+CSV_WRITE_SECONDS = 1.0
+CPU_FREQ_SAMPLE_LIMIT = 8
 SHAHEEN_CPU_TDP_WATTS = 360.0
 
 
@@ -29,10 +31,11 @@ class NullGpuSampler:
 
 
 class Worker:
-    def __init__(self, session_dir: Path, repo_root: Path, poll_ms: int):
+    def __init__(self, session_dir: Path, repo_root: Path, poll_ms: int, sample_ms: int):
         self.session_dir = session_dir
         self.repo_root = repo_root
         self.poll_seconds = max(0.001, poll_ms / 1000.0)
+        self.sample_seconds = max(0.03, sample_ms / 1000.0)
         self.node_id = os.environ.get("SLURMD_NODENAME") or socket.gethostname()
         self.hostname = socket.gethostname()
         self.node_path = self.session_dir / "nodes" / f"{self.node_id}.json"
@@ -42,10 +45,12 @@ class Worker:
         self.message = ""
         self.hw_info = collect_hw_info()
         self.latest_power: dict[str, object] | None = None
+        self._previous_cpu_times = read_cpu_times()
         self.last_sequence = 0
         self.burner: subprocess.Popen[str] | None = None
         self.burner_job_sequence: int | None = None
         self.burner_start_at: float | None = None
+        self._last_csv_write = 0.0
         self._stop = False
         self._sampler = self._build_sampler()
 
@@ -64,7 +69,8 @@ class Worker:
             self._poll_burner()
             if now >= next_sample:
                 self._sample_power()
-                next_sample = now + WATCHER_SECONDS
+                self._write_state()
+                next_sample = now + self.sample_seconds
             if now >= next_heartbeat:
                 self._write_state()
                 next_heartbeat = now + HEARTBEAT_SECONDS
@@ -84,7 +90,18 @@ class Worker:
             return
         with self.sample_path.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.writer(handle)
-            writer.writerow(["timestamp", "cpu_watts"])
+            writer.writerow(
+                [
+                    "timestamp",
+                    "cpu_watts",
+                    "cpu_watts_estimated",
+                    "cpu_utilization_percent",
+                    "cpu_freq_mhz_avg",
+                    "cpu_freq_mhz_min",
+                    "cpu_freq_mhz_max",
+                    "loadavg_1m",
+                ]
+            )
 
     def _handle_command(self) -> None:
         command_path = self.session_dir / "command.json"
@@ -115,6 +132,7 @@ class Worker:
 
     def _start_burner(self, command: dict[str, Any], sequence: int) -> None:
         self._stop_burner()
+        self._reset_samples()
         start_at = parse_iso_epoch(command.get("start_at"))
         waveform_path = str(command.get("waveform_path") or "")
         duration = str(command.get("duration") or "")
@@ -206,14 +224,46 @@ class Worker:
 
         timestamp = sample.timestamp.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
         cpu_watts = sample.cpu_watts
+        metrics = collect_runtime_metrics(self._previous_cpu_times, self.hw_info)
+        self._previous_cpu_times = metrics.pop("_cpu_times", self._previous_cpu_times)
+        cpu_watts_estimated = metrics.get("cpu_watts_estimated")
+        cpu_watts_display = cpu_watts if cpu_watts is not None else cpu_watts_estimated
+        watts_source = "rapl" if cpu_watts is not None else "estimated" if cpu_watts_estimated is not None else "unavailable"
         self.latest_power = {
             "timestamp": timestamp,
             "cpu_watts": cpu_watts,
-            "status": self._sampler.status,
+            "cpu_watts_estimated": cpu_watts_estimated,
+            "cpu_watts_display": cpu_watts_display,
+            "cpu_watts_source": watts_source,
+            "status": runtime_status(self._sampler.status, watts_source),
+            **metrics,
         }
+        if time.monotonic() - self._last_csv_write < CSV_WRITE_SECONDS:
+            return
+        self._last_csv_write = time.monotonic()
         with self.sample_path.open("a", newline="", encoding="utf-8") as handle:
             writer = csv.writer(handle)
-            writer.writerow([timestamp, "" if cpu_watts is None else f"{cpu_watts:.6f}"])
+            writer.writerow(
+                [
+                    timestamp,
+                    format_optional_float(cpu_watts),
+                    format_optional_float(cpu_watts_estimated),
+                    format_optional_float(metrics.get("cpu_utilization_percent")),
+                    format_optional_float(metrics.get("cpu_freq_mhz_avg")),
+                    format_optional_float(metrics.get("cpu_freq_mhz_min")),
+                    format_optional_float(metrics.get("cpu_freq_mhz_max")),
+                    format_optional_float(metrics.get("loadavg_1m")),
+                ]
+            )
+
+    def _reset_samples(self) -> None:
+        self._previous_cpu_times = read_cpu_times()
+        self._last_csv_write = 0.0
+        try:
+            self.sample_path.unlink()
+        except FileNotFoundError:
+            pass
+        self._write_sample_header()
 
     def _write_state(self) -> None:
         payload: dict[str, object] = {
@@ -246,12 +296,16 @@ class Worker:
 
 
 def collect_hw_info() -> dict[str, object]:
+    socket_count = detect_cpu_socket_count()
     return {
         "cpu_model": detect_cpu_model(),
         "cpu_count": os.cpu_count() or 0,
+        "cpu_socket_count": socket_count,
         "memory_total_gb": read_memory_total_gb(),
         "ip_address": first_ip_address(),
         "cpu_tdp_watts": detect_cpu_tdp_watts(),
+        "cpu_tdp_per_socket_watts": SHAHEEN_CPU_TDP_WATTS,
+        "cpu_tdp_total_watts": round(socket_count * SHAHEEN_CPU_TDP_WATTS, 2),
     }
 
 
@@ -290,6 +344,162 @@ def first_ip_address() -> str:
 
 def detect_cpu_tdp_watts() -> float:
     return SHAHEEN_CPU_TDP_WATTS
+
+
+def detect_cpu_socket_count() -> int:
+    output = run_text(["lscpu"])
+    for line in output.splitlines():
+        if line.lower().startswith("socket(s):"):
+            try:
+                return max(1, int(line.split(":", 1)[1].strip()))
+            except ValueError:
+                break
+
+    packages = set()
+    for path in Path("/sys/devices/system/cpu").glob("cpu[0-9]*/topology/physical_package_id"):
+        try:
+            packages.add(int(path.read_text(encoding="utf-8").strip()))
+        except (OSError, ValueError):
+            continue
+    return max(1, len(packages))
+
+
+def collect_runtime_metrics(
+    previous_cpu_times: tuple[int, int] | None,
+    hw_info: dict[str, object],
+) -> dict[str, object]:
+    current_cpu_times = read_cpu_times()
+    utilization = cpu_utilization_percent(previous_cpu_times, current_cpu_times)
+    frequencies = read_cpu_frequency_summary()
+    loadavg_1m = read_loadavg_1m()
+    cpu_count = int(hw_info.get("cpu_count") or os.cpu_count() or 0)
+    total_tdp = float(hw_info.get("cpu_tdp_total_watts") or hw_info.get("cpu_tdp_watts") or 0.0)
+    estimated_watts = estimate_cpu_watts(utilization, total_tdp)
+    load_per_cpu = None
+    if loadavg_1m is not None and cpu_count > 0:
+        load_per_cpu = round((loadavg_1m / cpu_count) * 100.0, 2)
+
+    return {
+        "_cpu_times": current_cpu_times,
+        "cpu_utilization_percent": utilization,
+        "cpu_watts_estimated": estimated_watts,
+        "cpu_tdp_total_watts": total_tdp,
+        "loadavg_1m": loadavg_1m,
+        "loadavg_per_cpu_percent": load_per_cpu,
+        **frequencies,
+    }
+
+
+def read_cpu_frequency_summary(
+    root: Path = Path("/sys/devices/system/cpu/cpufreq"),
+    limit: int = CPU_FREQ_SAMPLE_LIMIT,
+) -> dict[str, object]:
+    values = []
+    for path in sorted(root.glob("policy*/scaling_cur_freq"))[:limit]:
+        try:
+            khz = float(path.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            continue
+        if khz > 0:
+            values.append(khz / 1000.0)
+
+    if not values:
+        values = read_cpuinfo_mhz_values()
+
+    if not values:
+        return {
+            "cpu_freq_mhz_avg": None,
+            "cpu_freq_mhz_min": None,
+            "cpu_freq_mhz_max": None,
+            "cpu_freq_sample_count": 0,
+        }
+
+    return {
+        "cpu_freq_mhz_avg": round(sum(values) / len(values), 2),
+        "cpu_freq_mhz_min": round(min(values), 2),
+        "cpu_freq_mhz_max": round(max(values), 2),
+        "cpu_freq_sample_count": len(values),
+    }
+
+
+def read_cpuinfo_mhz_values(path: Path = Path("/proc/cpuinfo")) -> list[float]:
+    values = []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return values
+    for line in lines:
+        if not line.lower().startswith("cpu mhz"):
+            continue
+        try:
+            mhz = float(line.split(":", 1)[1].strip())
+        except (IndexError, ValueError):
+            continue
+        if mhz > 0:
+            values.append(mhz)
+    return values
+
+
+def read_cpu_times(path: Path = Path("/proc/stat")) -> tuple[int, int] | None:
+    try:
+        first_line = path.read_text(encoding="utf-8").splitlines()[0]
+    except (OSError, IndexError):
+        return None
+    parts = first_line.split()
+    if not parts or parts[0] != "cpu":
+        return None
+    try:
+        values = [int(value) for value in parts[1:]]
+    except ValueError:
+        return None
+    if len(values) < 5:
+        return None
+    idle = values[3] + values[4]
+    total = sum(values)
+    return idle, total
+
+
+def cpu_utilization_percent(
+    previous: tuple[int, int] | None,
+    current: tuple[int, int] | None,
+) -> float | None:
+    if previous is None or current is None:
+        return None
+    previous_idle, previous_total = previous
+    current_idle, current_total = current
+    total_delta = current_total - previous_total
+    idle_delta = current_idle - previous_idle
+    if total_delta <= 0 or idle_delta < 0:
+        return None
+    busy = max(0, total_delta - idle_delta)
+    return round(min(100.0, (busy / total_delta) * 100.0), 2)
+
+
+def estimate_cpu_watts(utilization_percent: float | None, cpu_tdp_total_watts: float) -> float | None:
+    if utilization_percent is None or cpu_tdp_total_watts <= 0:
+        return None
+    return round(cpu_tdp_total_watts * (utilization_percent / 100.0), 2)
+
+
+def read_loadavg_1m() -> float | None:
+    try:
+        return round(os.getloadavg()[0], 2)
+    except OSError:
+        return None
+
+
+def runtime_status(base_status: str, watts_source: str) -> str:
+    if watts_source == "rapl":
+        return base_status
+    if watts_source == "estimated":
+        return f"{base_status}; CPU watts estimated from utilization and Shaheen TDP"
+    return f"{base_status}; CPU watts unavailable"
+
+
+def format_optional_float(value: object) -> str:
+    if isinstance(value, (int, float)):
+        return f"{float(value):.6f}"
+    return ""
 
 
 def run_text(command: list[str]) -> str:
@@ -333,7 +543,8 @@ def main() -> int:
     session_dir = Path(os.environ["BURNER_SLURM_SESSION_DIR"])
     repo_root = Path(os.environ.get("BURNER_REPO_ROOT", Path.cwd()))
     poll_ms = int(os.environ.get("BURNER_WORKER_POLL_MS", str(DEFAULT_POLL_MS)))
-    worker = Worker(session_dir=session_dir, repo_root=repo_root, poll_ms=poll_ms)
+    sample_ms = int(os.environ.get("BURNER_WORKER_SAMPLE_MS", str(DEFAULT_SAMPLE_MS)))
+    worker = Worker(session_dir=session_dir, repo_root=repo_root, poll_ms=poll_ms, sample_ms=sample_ms)
     return worker.run()
 
 

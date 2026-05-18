@@ -14,8 +14,15 @@ from slurm_controller import (  # noqa: E402
     parse_sbatch_job_id,
     render_sbatch_script,
     validate_poll_ms,
+    validate_sample_ms,
 )
-from slurm_worker import SHAHEEN_CPU_TDP_WATTS, detect_cpu_tdp_watts  # noqa: E402
+from slurm_worker import (  # noqa: E402
+    SHAHEEN_CPU_TDP_WATTS,
+    cpu_utilization_percent,
+    estimate_cpu_watts,
+    read_cpu_frequency_summary,
+    detect_cpu_tdp_watts,
+)
 from waveform_store import WaveformStore  # noqa: E402
 
 
@@ -37,6 +44,7 @@ def test_render_sbatch_script_uses_minimal_shaheen_options(tmp_path):
     assert "--account" not in script
     assert "--qos" not in script
     assert "${BURNER_CONDA_ROOT}/bin/python3" in script
+    assert "BURNER_WORKER_SAMPLE_MS=30" in script
     assert "command -v python3" in script
     assert "Using worker python:" in script
     assert "srun --ntasks=\"${SLURM_NNODES}\" --ntasks-per-node=1" in script
@@ -56,9 +64,35 @@ def test_validate_poll_ms_enforces_10ms_floor():
         raise AssertionError("expected validation failure")
 
 
+def test_validate_sample_ms_defaults_to_30ms_floor():
+    assert validate_sample_ms(30) == 30
+    try:
+        validate_sample_ms(29)
+    except Exception as exc:
+        assert "sample_ms" in str(exc)
+    else:
+        raise AssertionError("expected validation failure")
+
+
 def test_shaheen_cpu_tdp_is_fixed_per_socket_value():
     assert SHAHEEN_CPU_TDP_WATTS == 360.0
     assert detect_cpu_tdp_watts() == 360.0
+
+
+def test_runtime_metric_helpers_report_frequency_utilization_and_estimated_watts(tmp_path):
+    cpufreq = tmp_path / "cpufreq"
+    (cpufreq / "policy0").mkdir(parents=True)
+    (cpufreq / "policy1").mkdir()
+    (cpufreq / "policy0" / "scaling_cur_freq").write_text("2400000\n", encoding="utf-8")
+    (cpufreq / "policy1" / "scaling_cur_freq").write_text("1800000\n", encoding="utf-8")
+
+    frequencies = read_cpu_frequency_summary(cpufreq)
+
+    assert frequencies["cpu_freq_mhz_avg"] == 2100.0
+    assert frequencies["cpu_freq_mhz_min"] == 1800.0
+    assert frequencies["cpu_freq_mhz_max"] == 2400.0
+    assert cpu_utilization_percent((100, 200), (150, 400)) == 75.0
+    assert estimate_cpu_watts(50.0, 720.0) == 360.0
 
 
 def test_submit_allocation_prefers_slurm_client(tmp_path):

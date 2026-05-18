@@ -784,7 +784,7 @@ button:disabled {
 
 .hardware-row {
   display: grid;
-  grid-template-columns: 88px minmax(0, 1fr);
+  grid-template-columns: 96px minmax(0, 1fr);
   gap: 8px;
   align-items: baseline;
   color: var(--text-soft);
@@ -801,6 +801,41 @@ button:disabled {
 .machine-options {
   display: grid;
   gap: 10px;
+}
+
+.power-chart-panel {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--panel-strong);
+}
+
+.power-chart-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.power-chart {
+  position: relative;
+  height: 150px;
+  min-height: 150px;
+}
+
+.power-chart-empty {
+  display: grid;
+  height: 100%;
+  place-items: center;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 13px;
 }
 
 .delay-field {

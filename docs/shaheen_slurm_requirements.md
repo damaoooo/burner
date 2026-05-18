@@ -28,7 +28,8 @@ GPU burn remains visible only as a disabled Shaheen CPU-only capability. No impl
 - The shared control base defaults to `/scratch/zhoul0e/burner-slurm-control`.
 - Compute nodes may not see the login-node `envs/burner` path. The sbatch script must select an executable worker Python in this order: explicit `BURNER_WORKER_PYTHON`, visible Conda env Python, `/scratch/$USER/miniconda3/bin/python3`, then `command -v python3`.
 - The worker must launch the Python `burner` entrypoint through its own `sys.executable`, not through the script shebang, so compute nodes do not accidentally use an older system Python.
-- Worker polling interval is configured in the UI before submit and must support a 10 ms floor.
+- Worker command polling interval is configured in the UI before submit and must support a 10 ms floor.
+- Worker metric sampling and UI refresh default to `30 ms`, with a configurable floor of `30 ms`.
 - Worker status files must include hostname, SLURM node name, IP address, CPU model, CPU count, memory, CPU TDP, heartbeat, latest watcher sample, and current worker state.
 - Shaheen CPU nodes are treated as homogeneous for TDP reporting. Worker node info should report a fixed per-CPU TDP of `360 W`.
 
@@ -46,8 +47,11 @@ GPU burn remains visible only as a disabled Shaheen CPU-only capability. No impl
 - CPU burn runs on all CPUs on each node; do not pass a fixed CPU count to `lookbusy`.
 - GPU burn must be disabled and must not be submitted to compute workers.
 - Each worker samples local CPU power and appends node-local CSV samples under the session control directory.
-- If CPU power cannot be sampled through RAPL, the worker reports an unavailable status without crashing.
+- If CPU power cannot be sampled through RAPL, the worker reports an unavailable status without crashing and must expose a clearly marked estimated CPU wattage based on CPU utilization and Shaheen node TDP.
+- Each worker should expose load-confirmation metrics in node state and CSV samples: estimated CPU watts, CPU utilization percent, average/min/max CPU frequency MHz, and 1-minute load average.
+- High-frequency UI samples should update the latest node status file; CSV samples should be decimated to about once per second to reduce shared filesystem pressure.
 - UI aggregates node state and latest watcher samples from worker status files.
+- Each machine card should show a short live estimated-power chart. The frontend polling interval is user-configurable separately from the compute-worker command polling interval.
 
 ## UI Behavior
 

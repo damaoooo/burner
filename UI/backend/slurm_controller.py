@@ -9,6 +9,7 @@ import stat
 import time
 import uuid
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -158,6 +159,7 @@ class SlurmSession:
     nodes_requested: int
     time_limit: str
     poll_ms: int
+    sample_ms: int
     created_at: float
 
     def to_dict(self) -> dict[str, object]:
@@ -168,6 +170,7 @@ class SlurmSession:
             "nodes_requested": self.nodes_requested,
             "time_limit": self.time_limit,
             "poll_ms": self.poll_ms,
+            "sample_ms": self.sample_ms,
             "created_at": self.created_at,
         }
 
@@ -228,10 +231,12 @@ class SlurmController:
         nodes: int,
         time_limit: str,
         poll_ms: int,
+        sample_ms: int = 30,
     ) -> dict[str, object]:
         nodes = validate_node_count(nodes)
         time_limit = validate_time_limit(time_limit)
         poll_ms = validate_poll_ms(poll_ms)
+        sample_ms = validate_sample_ms(sample_ms)
 
         async with self._lock:
             current = self._load_current_session()
@@ -241,6 +246,7 @@ class SlurmController:
                     raise SlurmConflictError(
                         f"SLURM allocation {current.job_id} is still active ({state})"
                     )
+            self._cleanup_old_sessions()
 
             session_id = f"shaheen-{datetime.now(UTC).strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:8]}"
             session_dir = self._control_base / session_id
@@ -257,6 +263,7 @@ class SlurmController:
                     repo_root=self._repo_root,
                     conda_env=self._conda_env,
                     poll_ms=poll_ms,
+                    sample_ms=sample_ms,
                 ),
                 encoding="utf-8",
             )
@@ -278,6 +285,7 @@ class SlurmController:
                 nodes_requested=nodes,
                 time_limit=time_limit,
                 poll_ms=poll_ms,
+                sample_ms=sample_ms,
                 created_at=time.time(),
             )
             self._write_session(session)
@@ -318,6 +326,7 @@ class SlurmController:
             "nodes_requested": session.nodes_requested,
             "nodes_ready": ready_count,
             "poll_ms": session.poll_ms,
+            "sample_ms": session.sample_ms,
             "time_limit": session.time_limit,
             "created_at": session.created_at,
             "nodes": nodes,
@@ -513,7 +522,12 @@ class SlurmController:
                 ),
                 None,
             )
-            cpu_tdp = _float_or_zero(hw.get("cpu_tdp_watts"))
+            cpu_socket_count = int(hw.get("cpu_socket_count") or 0)
+            cpu_tdp_per_socket = _float_or_zero(hw.get("cpu_tdp_per_socket_watts") or hw.get("cpu_tdp_watts"))
+            cpu_tdp_total = _float_or_zero(hw.get("cpu_tdp_total_watts"))
+            if cpu_tdp_total <= 0 and cpu_socket_count > 0 and cpu_tdp_per_socket > 0:
+                cpu_tdp_total = cpu_socket_count * cpu_tdp_per_socket
+            cpu_tdp = cpu_tdp_total or cpu_tdp_per_socket
             nodes.append(
                 {
                     "id": node_id,
@@ -532,6 +546,9 @@ class SlurmController:
                     "hw_info": {
                         "cpu_model": str(hw.get("cpu_model") or ""),
                         "cpu_tdp": cpu_tdp,
+                        "cpu_socket_count": cpu_socket_count,
+                        "cpu_tdp_per_socket_watts": cpu_tdp_per_socket,
+                        "cpu_tdp_total_watts": cpu_tdp_total,
                         "gpu_tdp": 0.0,
                         "gpus": [],
                         "cpu_count": int(hw.get("cpu_count") or 0),
@@ -600,6 +617,23 @@ class SlurmController:
     def _write_session(self, session: SlurmSession) -> None:
         _atomic_write_json(session.session_dir / "session.json", session.to_dict())
 
+    def _cleanup_old_sessions(self) -> None:
+        self._control_base.mkdir(parents=True, exist_ok=True)
+        for path in self._control_base.iterdir():
+            if path == self._current_path:
+                continue
+            if not (
+                path.name.startswith("shaheen-")
+                or path.name.startswith("diag-")
+                or path.name.startswith("freq-diag-")
+            ):
+                continue
+            if path.is_dir():
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                with suppress(OSError):
+                    path.unlink()
+
     def _next_command_sequence(self, session: SlurmSession) -> int:
         path = session.session_dir / "command.json"
         try:
@@ -621,6 +655,12 @@ def validate_node_count(value: int) -> int:
 def validate_poll_ms(value: int) -> int:
     if not isinstance(value, int) or value < 10 or value > 1000:
         raise SlurmError("poll_ms must be between 10 and 1000")
+    return value
+
+
+def validate_sample_ms(value: int) -> int:
+    if not isinstance(value, int) or value < 30 or value > 10000:
+        raise SlurmError("sample_ms must be between 30 and 10000")
     return value
 
 
@@ -655,6 +695,7 @@ def render_sbatch_script(
     repo_root: Path,
     conda_env: str,
     poll_ms: int,
+    sample_ms: int = 30,
 ) -> str:
     return f"""#!/usr/bin/env bash
 #SBATCH -N {nodes}
@@ -669,6 +710,7 @@ set -euo pipefail
 export BURNER_SLURM_SESSION_DIR={session_dir}
 export BURNER_REPO_ROOT={repo_root}
 export BURNER_WORKER_POLL_MS={poll_ms}
+export BURNER_WORKER_SAMPLE_MS={sample_ms}
 export BURNER_CONDA_ENV={conda_env}
 export BURNER_CONDA_ROOT="${{BURNER_CONDA_ROOT:-/scratch/${{USER}}/miniconda3}}"
 export BURNER_ENV_PYTHON="${{BURNER_CONDA_ROOT}}/envs/${{BURNER_CONDA_ENV}}/bin/python"
@@ -726,6 +768,7 @@ def _session_from_dict(raw: dict[str, Any]) -> SlurmSession | None:
             nodes_requested=int(raw["nodes_requested"]),
             time_limit=str(raw["time_limit"]),
             poll_ms=int(raw["poll_ms"]),
+            sample_ms=int(raw.get("sample_ms") or 30),
             created_at=float(raw.get("created_at") or 0.0),
         )
     except (KeyError, TypeError, ValueError):

@@ -5,11 +5,13 @@ import type { SlurmAllocation } from "../types";
 
 interface Props {
   allocation: SlurmAllocation;
+  refreshMs: number;
+  onRefreshMsChange: (value: number) => void;
   onAllocationChange: (allocation: SlurmAllocation) => void;
   onToast: (message: string, kind?: "info" | "error" | "success") => void;
 }
 
-export default function AllocationPanel({ allocation, onAllocationChange, onToast }: Props) {
+export default function AllocationPanel({ allocation, refreshMs, onRefreshMsChange, onAllocationChange, onToast }: Props) {
   const { state, dispatch } = useAppState();
   const [nodes, setNodes] = useState("1");
   const [timeLimit, setTimeLimit] = useState("05:00:00");
@@ -28,9 +30,13 @@ export default function AllocationPanel({ allocation, onAllocationChange, onToas
       onToast("Worker polling must be an integer from 10 to 1000 ms.", "error");
       return;
     }
+    if (!isValidRefreshMs(refreshMs)) {
+      onToast("UI refresh must be an integer from 30 to 10000 ms.", "error");
+      return;
+    }
     setSubmitting(true);
     try {
-      const next = await submitAllocation(nodeCount, timeLimit, pollMs);
+      const next = await submitAllocation(nodeCount, timeLimit, pollMs, refreshMs);
       onAllocationChange(next);
       dispatch({ type: "setBurnParams", samplingMs: String(pollMs) });
       onToast("SLURM allocation submitted.", "success");
@@ -97,6 +103,23 @@ export default function AllocationPanel({ allocation, onAllocationChange, onToas
             onChange={(event) => dispatch({ type: "setBurnParams", samplingMs: event.target.value })}
           />
         </label>
+        <label className="label">
+          Sample / UI Refresh (ms)
+          <input
+            className="field"
+            type="number"
+            min={30}
+            max={10000}
+            step={10}
+            value={refreshMs}
+            onChange={(event) => {
+              const parsed = Number(event.target.value);
+              if (isValidRefreshMs(parsed)) {
+                onRefreshMsChange(parsed);
+              }
+            }}
+          />
+        </label>
         <div className="allocation-actions">
           <button
             type="button"
@@ -125,6 +148,7 @@ export default function AllocationPanel({ allocation, onAllocationChange, onToas
             </span>
             <span>{allocation.time_limit}</span>
             <span>{allocation.poll_ms} ms polling</span>
+            <span>{allocation.sample_ms ?? refreshMs} ms samples</span>
           </>
         ) : (
           <span>No active SLURM allocation.</span>
@@ -150,4 +174,8 @@ function parsePollMs(value: string): number | undefined {
     return undefined;
   }
   return parsed;
+}
+
+function isValidRefreshMs(value: number): boolean {
+  return Number.isInteger(value) && value >= 30 && value <= 10000;
 }

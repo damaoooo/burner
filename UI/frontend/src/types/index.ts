@@ -41,8 +41,22 @@ export interface HwInfo {
   latest_power?: {
     timestamp?: string;
     cpu_watts?: number | null;
+    cpu_watts_estimated?: number | null;
+    cpu_watts_display?: number | null;
+    cpu_watts_source?: "rapl" | "estimated" | "unavailable" | string;
+    cpu_utilization_percent?: number | null;
+    cpu_freq_mhz_avg?: number | null;
+    cpu_freq_mhz_min?: number | null;
+    cpu_freq_mhz_max?: number | null;
+    cpu_freq_sample_count?: number;
+    cpu_tdp_total_watts?: number;
+    loadavg_1m?: number | null;
+    loadavg_per_cpu_percent?: number | null;
     status?: string;
   } | null;
+  cpu_socket_count?: number;
+  cpu_tdp_per_socket_watts?: number;
+  cpu_tdp_total_watts?: number;
 }
 
 export interface MachineApiRecord extends MachineConfig {
@@ -133,6 +147,7 @@ export interface SlurmAllocation {
   nodes_requested?: number;
   nodes_ready?: number;
   poll_ms?: number;
+  sample_ms?: number;
   time_limit?: string;
   created_at?: number;
   nodes?: MachineApiRecord[];

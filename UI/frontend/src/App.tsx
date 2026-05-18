@@ -28,6 +28,7 @@ export default function App() {
   const [allocation, setAllocation] = useState<SlurmAllocation>({ active: false, status: "none", nodes: [] });
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [theme, setTheme] = useState<ThemeMode>(() => getInitialTheme());
+  const [refreshMs, setRefreshMs] = useState(() => getInitialRefreshMs());
 
   const addToast = useCallback((message: string, kind: Toast["kind"] = "info") => {
     const id = Date.now() + Math.random();
@@ -59,7 +60,17 @@ export default function App() {
           cpu_model: event.cpu_model,
           cpu_tdp: event.cpu_tdp,
           gpu_tdp: event.gpu_tdp,
-          gpus: event.gpus
+          gpus: event.gpus,
+          cpu_count: event.cpu_count,
+          cpu_socket_count: event.cpu_socket_count,
+          cpu_tdp_per_socket_watts: event.cpu_tdp_per_socket_watts,
+          cpu_tdp_total_watts: event.cpu_tdp_total_watts,
+          memory_total_gb: event.memory_total_gb,
+          ip_address: event.ip_address,
+          slurm_node: event.slurm_node,
+          worker_status: event.worker_status,
+          last_heartbeat: event.last_heartbeat,
+          latest_power: event.latest_power
         }
       });
       return;
@@ -159,17 +170,28 @@ export default function App() {
   }, [addToast]);
 
   useEffect(() => {
-    const timer = window.setInterval(() => {
+    let inFlight = false;
+    const refresh = () => {
+      if (inFlight) {
+        return;
+      }
+      inFlight = true;
       void Promise.all([fetchMachines(), fetchBurnStatus(), fetchAllocation()])
         .then(([machines, jobs, currentAllocation]) => {
           dispatch({ type: "setMachines", machines });
           dispatch({ type: "setBurnJobs", jobs });
           setAllocation(currentAllocation);
         })
-        .catch(() => undefined);
-    }, 2000);
+        .catch(() => undefined)
+        .finally(() => {
+          inFlight = false;
+        });
+    };
+    const timer = window.setInterval(() => {
+      refresh();
+    }, refreshMs);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [refreshMs]);
 
   useEffect(() => {
     return openEventSocket(
@@ -201,6 +223,10 @@ export default function App() {
     window.localStorage.setItem("burner-theme", theme);
     window.dispatchEvent(new CustomEvent("burner-theme-change"));
   }, [theme]);
+
+  useEffect(() => {
+    window.localStorage.setItem("burner-ui-refresh-ms", String(refreshMs));
+  }, [refreshMs]);
 
   useEffect(() => {
     document.documentElement.dataset.runMode = state.runMode;
@@ -254,7 +280,13 @@ export default function App() {
           <StatusTile label="Active Jobs" value={activeJobs} detail={scheduledJobs > 0 ? `${scheduledJobs} scheduled` : "idle"} />
         </section>
 
-        <AllocationPanel allocation={allocation} onAllocationChange={setAllocation} onToast={addToast} />
+        <AllocationPanel
+          allocation={allocation}
+          refreshMs={refreshMs}
+          onRefreshMsChange={setRefreshMs}
+          onAllocationChange={setAllocation}
+          onToast={addToast}
+        />
 
         <SchedulePanel onToast={addToast} />
 
@@ -354,4 +386,10 @@ function getInitialTheme(): ThemeMode {
     return stored;
   }
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function getInitialRefreshMs(): number {
+  const raw = window.localStorage.getItem("burner-ui-refresh-ms");
+  const parsed = raw ? Number(raw) : 30;
+  return Number.isInteger(parsed) && parsed >= 30 && parsed <= 10000 ? parsed : 30;
 }

@@ -91,11 +91,12 @@ export async function fetchAllocation(): Promise<SlurmAllocation> {
   return data;
 }
 
-export async function submitAllocation(nodes: number, timeLimit: string, pollMs: number): Promise<SlurmAllocation> {
+export async function submitAllocation(nodes: number, timeLimit: string, pollMs: number, sampleMs: number): Promise<SlurmAllocation> {
   const { data } = await http.post<SlurmAllocation>("/slurm/submit", {
     nodes,
     time_limit: timeLimit,
-    poll_ms: pollMs
+    poll_ms: pollMs,
+    sample_ms: sampleMs
   });
   return data;
 }

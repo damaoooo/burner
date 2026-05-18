@@ -24,6 +24,7 @@ class SlurmSubmitPayload(BaseModel):
     nodes: int
     time_limit: str
     poll_ms: int = 10
+    sample_ms: int = 30
 
 
 class BurnMachinePayload(BaseModel):
@@ -106,6 +107,7 @@ async def submit_allocation(payload: SlurmSubmitPayload):
             nodes=payload.nodes,
             time_limit=payload.time_limit,
             poll_ms=payload.poll_ms,
+            sample_ms=payload.sample_ms,
         )
     except SlurmConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
