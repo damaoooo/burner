@@ -1,25 +1,25 @@
 # Burner WebUI
 
-## Single-Port Startup
+## Shaheen Single-Port Startup
 
-Make sure the Conda environment `ReLL` exists and `node` / `npm` are available:
+Make sure the Conda environment `burner` exists and `node` / `npm` are available. One command builds the frontend and starts the FastAPI backend that serves the frontend, `/api/*`, and `/ws` on the same port:
 
 ```bash
-bash UI/run.sh
+BURNER_UI_PORT=18080 bash UI/run.sh
 ```
 
 Default URL:
 
 ```text
-http://localhost:8000
+http://localhost:18080
 ```
 
-The frontend, `/api/*`, and `/ws` are all served by the same FastAPI process.
+If you do not set `BURNER_UI_PORT`, the script uses port `8000`.
 
 Optional environment variables:
 
 ```bash
-BURNER_UI_PORT=9000 BURNER_UI_HOST=127.0.0.1 BURNER_CONDA_ENV=ReLL bash UI/run.sh
+BURNER_UI_PORT=9000 BURNER_UI_HOST=127.0.0.1 BURNER_CONDA_ENV=burner bash UI/run.sh
 ```
 
 ## Development Mode
@@ -28,7 +28,7 @@ For frontend hot reload, run the backend and frontend separately:
 
 ```bash
 cd UI/backend
-conda run --no-capture-output -n ReLL python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+conda run --no-capture-output -n burner python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 ```bash
