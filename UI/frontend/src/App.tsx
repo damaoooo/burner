@@ -41,6 +41,10 @@ export default function App() {
   const handleWsEvent = useCallback((event: WsEvent) => {
     if (event.event === "allocation_changed") {
       setAllocation(event);
+      if (!event.active) {
+        dispatch({ type: "setMachines", machines: [] });
+        dispatch({ type: "setBurnJobs", jobs: [] });
+      }
       return;
     }
     if (event.event === "machine_status") {
@@ -225,7 +229,7 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
-    window.localStorage.setItem("burner-ui-refresh-ms", String(refreshMs));
+    window.localStorage.setItem("burner-ui-refresh-ms-v2", String(refreshMs));
   }, [refreshMs]);
 
   useEffect(() => {
@@ -389,7 +393,7 @@ function getInitialTheme(): ThemeMode {
 }
 
 function getInitialRefreshMs(): number {
-  const raw = window.localStorage.getItem("burner-ui-refresh-ms");
-  const parsed = raw ? Number(raw) : 30;
-  return Number.isInteger(parsed) && parsed >= 30 && parsed <= 10000 ? parsed : 30;
+  const raw = window.localStorage.getItem("burner-ui-refresh-ms-v2");
+  const parsed = raw ? Number(raw) : 50;
+  return Number.isInteger(parsed) && parsed >= 30 && parsed <= 10000 ? parsed : 50;
 }

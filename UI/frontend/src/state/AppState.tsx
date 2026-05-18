@@ -81,8 +81,11 @@ export const initialState: AppState = {
 export function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case "setMachines": {
-      const nextMachines = { ...state.machines };
-      const nextJobs = { ...state.burnJobs };
+      const nextMachines: AppState["machines"] = {};
+      const activeMachineIds = new Set(action.machines.map((record) => record.id));
+      const nextJobs: AppState["burnJobs"] = Object.fromEntries(
+        Object.entries(state.burnJobs).filter(([, job]) => activeMachineIds.has(job.machine_id))
+      );
       for (const record of action.machines) {
         const previous = state.machines[record.id];
         nextMachines[record.id] = {
@@ -108,7 +111,7 @@ export function reducer(state: AppState, action: Action): AppState {
           delaySeconds: previous?.delaySeconds ?? 0
         };
         if (record.job) {
-          nextJobs[record.id] = record.job;
+          nextJobs[record.job.job_id] = record.job;
         }
       }
       return { ...state, machines: nextMachines, burnJobs: nextJobs };

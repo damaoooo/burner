@@ -231,7 +231,7 @@ class SlurmController:
         nodes: int,
         time_limit: str,
         poll_ms: int,
-        sample_ms: int = 30,
+        sample_ms: int = 50,
     ) -> dict[str, object]:
         nodes = validate_node_count(nodes)
         time_limit = validate_time_limit(time_limit)
@@ -695,7 +695,7 @@ def render_sbatch_script(
     repo_root: Path,
     conda_env: str,
     poll_ms: int,
-    sample_ms: int = 30,
+    sample_ms: int = 50,
 ) -> str:
     return f"""#!/usr/bin/env bash
 #SBATCH -N {nodes}
@@ -768,7 +768,7 @@ def _session_from_dict(raw: dict[str, Any]) -> SlurmSession | None:
             nodes_requested=int(raw["nodes_requested"]),
             time_limit=str(raw["time_limit"]),
             poll_ms=int(raw["poll_ms"]),
-            sample_ms=int(raw.get("sample_ms") or 30),
+            sample_ms=int(raw.get("sample_ms") or 50),
             created_at=float(raw.get("created_at") or 0.0),
         )
     except (KeyError, TypeError, ValueError):

@@ -29,7 +29,7 @@ GPU burn remains visible only as a disabled Shaheen CPU-only capability. No impl
 - Compute nodes may not see the login-node `envs/burner` path. The sbatch script must select an executable worker Python in this order: explicit `BURNER_WORKER_PYTHON`, visible Conda env Python, `/scratch/$USER/miniconda3/bin/python3`, then `command -v python3`.
 - The worker must launch the Python `burner` entrypoint through its own `sys.executable`, not through the script shebang, so compute nodes do not accidentally use an older system Python.
 - Worker command polling interval is configured in the UI before submit and must support a 10 ms floor.
-- Worker metric sampling and UI refresh default to `30 ms`, with a configurable floor of `30 ms`.
+- Worker metric sampling and UI refresh default to `50 ms`, with a configurable floor of `30 ms`.
 - Worker status files must include hostname, SLURM node name, IP address, CPU model, CPU count, memory, CPU TDP, heartbeat, latest watcher sample, and current worker state.
 - Shaheen CPU nodes are treated as homogeneous for TDP reporting. Worker node info should report a fixed per-CPU TDP of `360 W`.
 

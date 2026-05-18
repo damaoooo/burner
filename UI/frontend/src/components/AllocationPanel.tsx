@@ -52,6 +52,8 @@ export default function AllocationPanel({ allocation, refreshMs, onRefreshMsChan
     try {
       const next = await releaseAllocation();
       onAllocationChange(next);
+      dispatch({ type: "setMachines", machines: [] });
+      dispatch({ type: "setBurnJobs", jobs: [] });
       onToast("SLURM allocation released.", "success");
     } catch (error) {
       onToast(extractErrorMessage(error), "error");

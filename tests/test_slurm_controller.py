@@ -44,7 +44,7 @@ def test_render_sbatch_script_uses_minimal_shaheen_options(tmp_path):
     assert "--account" not in script
     assert "--qos" not in script
     assert "${BURNER_CONDA_ROOT}/bin/python3" in script
-    assert "BURNER_WORKER_SAMPLE_MS=30" in script
+    assert "BURNER_WORKER_SAMPLE_MS=50" in script
     assert "command -v python3" in script
     assert "Using worker python:" in script
     assert "srun --ntasks=\"${SLURM_NNODES}\" --ntasks-per-node=1" in script
