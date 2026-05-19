@@ -1,87 +1,69 @@
-import { useEffect, useMemo, useState } from "react";
 import TelemetryLineChart from "./TelemetryLineChart";
-import type { MachineState } from "../types";
+import type { LoadSeries, MachineState } from "../types";
 
 interface Props {
   machines: MachineState[];
+  loadSeries: LoadSeries | null;
+  loading: boolean;
+  burnActive: boolean;
 }
 
-interface PowerPoint {
-  key: string;
-  label: string;
-  watts: number;
-}
-
-export default function ClusterPowerChart({ machines }: Props) {
-  const [history, setHistory] = useState<PowerPoint[]>([]);
-  const latest = useMemo(() => summarizeClusterPower(machines), [machines]);
-
-  useEffect(() => {
-    if (machines.length === 0) {
-      setHistory([]);
-    }
-  }, [machines.length]);
-
-  useEffect(() => {
-    if (!latest) {
-      return;
-    }
-    setHistory((current) => {
-      if (current[current.length - 1]?.key === latest.key) {
-        return current;
-      }
-      return [...current, latest].slice(-180);
-    });
-  }, [latest]);
+export default function ClusterPowerChart({ machines, loadSeries, loading, burnActive }: Props) {
+  const points = loadSeries?.cluster.points ?? [];
+  const latestWatts = points.at(-1)?.watts;
+  const yMax = Math.max(maxPointWatts(points), totalClusterTdp(machines), 1);
 
   return (
     <section className="cluster-power-panel">
       <div className="section-heading">
         <div>
           <h2>Cluster Estimated Power</h2>
-          <span className="muted">{machines.length} allocated nodes</span>
+          <span className="muted">{chartSubtitle(loadSeries, loading, burnActive, machines.length)}</span>
         </div>
-        <strong>{latest ? formatWatts(latest.watts) : "-"}</strong>
+        <strong>{latestWatts == null ? "-" : formatWatts(latestWatts)}</strong>
       </div>
       <div className="cluster-power-chart">
         <TelemetryLineChart
-          points={history.map((point) => ({ label: point.label, value: point.watts }))}
-          yMax={Math.max(latest?.watts ?? 1, totalClusterTdp(machines), 1)}
+          points={points.map((point) => ({ label: formatTimeLabel(point.timestamp), value: point.watts }))}
+          yMax={yMax}
           yAxisLabel="Cluster Estimated CPU Power (W)"
           valueFormatter={formatWatts}
-          emptyText="Waiting for node telemetry"
+          emptyText={emptyText(loading, burnActive)}
         />
       </div>
     </section>
   );
 }
 
-function summarizeClusterPower(machines: MachineState[]): PowerPoint | null {
-  const samples = machines
-    .map((machine) => machine.hwInfo?.latest_power)
-    .filter((sample): sample is NonNullable<typeof sample> => Boolean(sample?.timestamp));
-  if (samples.length === 0) {
-    return null;
+function chartSubtitle(loadSeries: LoadSeries | null, loading: boolean, burnActive: boolean, nodeCount: number): string {
+  if (loading) {
+    return "loading completed CSV samples";
   }
+  if (burnActive) {
+    return "burn running; chart renders from CSV after completion";
+  }
+  if (loadSeries) {
+    return `${loadSeries.nodes.length} nodes, ${loadSeries.cluster.sample_count} CSV samples`;
+  }
+  return `${nodeCount} allocated nodes`;
+}
 
-  const watts = samples.reduce((total, sample) => {
-    const value = sample.cpu_watts_display ?? sample.cpu_watts ?? sample.cpu_watts_estimated ?? 0;
-    return total + value;
-  }, 0);
-  const timestamp = samples
-    .map((sample) => sample.timestamp ?? "")
-    .sort()
-    .at(-1) ?? new Date().toISOString();
-
-  return {
-    key: `${timestamp}:${watts.toFixed(2)}`,
-    label: formatTimeLabel(timestamp),
-    watts
-  };
+function emptyText(loading: boolean, burnActive: boolean): string {
+  if (loading) {
+    return "Loading completed CSV samples";
+  }
+  if (burnActive) {
+    return "Chart will render from CSV after burn completion";
+  }
+  return "Waiting for completed CSV samples";
 }
 
 function totalClusterTdp(machines: MachineState[]): number {
   return machines.reduce((total, machine) => total + (machine.hwInfo?.cpu_tdp_total_watts ?? machine.config.cpu_tdp ?? 0), 0);
+}
+
+function maxPointWatts(points: Array<{ watts: number }>): number {
+  return points.reduce((max, point) => Math.max(max, point.watts), 0);
 }
 
 function formatWatts(value: number): string {

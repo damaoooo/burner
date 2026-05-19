@@ -4,6 +4,7 @@ import asyncio
 import csv
 import io
 import json
+import math
 import os
 import re
 import shutil
@@ -214,6 +215,20 @@ class SlurmBurnJob:
             "waveform_name": self.waveform_name,
             "sync_mode": self.sync_mode,
         }
+
+
+@dataclass(frozen=True)
+class LoadSample:
+    timestamp_ms: int
+    timestamp: str
+    watts: float
+    cpu_watts: float | None
+    cpu_watts_estimated: float | None
+    cpu_utilization_percent: float | None
+    cpu_freq_mhz_avg: float | None
+    cpu_freq_mhz_min: float | None
+    cpu_freq_mhz_max: float | None
+    loadavg_1m: float | None
 
 
 class SlurmController:
@@ -530,6 +545,40 @@ class SlurmController:
             raise SlurmError("no node load samples are available for the latest SLURM session")
         return f"{session.session_id}-load.csv", output.getvalue()
 
+    def load_series(self, max_points: int = 1200) -> dict[str, object]:
+        session = self._load_current_session() or self._latest_session()
+        if session is None:
+            raise SlurmError("no SLURM session samples are available")
+
+        max_points = max(10, min(int(max_points), 5000))
+        samples_by_node = self._read_load_samples(session)
+        if not samples_by_node:
+            raise SlurmError("no node load samples are available for the latest SLURM session")
+
+        nodes = []
+        for node_id, samples in sorted(samples_by_node.items()):
+            nodes.append(
+                {
+                    "node_id": node_id,
+                    "sample_count": len(samples),
+                    "points": [
+                        _load_sample_to_dict(sample)
+                        for sample in _downsample_load_samples(samples, max_points)
+                    ],
+                }
+            )
+
+        return {
+            "session_id": session.session_id,
+            "job_id": session.job_id,
+            "generated_at": iso_z(datetime.now(UTC)),
+            "nodes": nodes,
+            "cluster": {
+                "sample_count": sum(len(samples) for samples in samples_by_node.values()),
+                "points": _cluster_load_points(samples_by_node, max_points),
+            },
+        }
+
     def status(self) -> list[dict[str, object]]:
         now = time.time()
         expired = [
@@ -621,6 +670,14 @@ class SlurmController:
                 }
             )
         return nodes
+
+    def _read_load_samples(self, session: SlurmSession) -> dict[str, list[LoadSample]]:
+        samples_by_node: dict[str, list[LoadSample]] = {}
+        for sample_path in sorted((session.session_dir / "samples").glob("*.csv")):
+            samples = _read_load_sample_file(sample_path)
+            if samples:
+                samples_by_node[sample_path.stem] = samples
+        return samples_by_node
 
     def _check_overlaps(self, plans: list[SlurmBurnJob]) -> None:
         conflicts = []
@@ -786,6 +843,7 @@ export BURNER_SLURM_SESSION_DIR={session_dir}
 export BURNER_REPO_ROOT={repo_root}
 export BURNER_WORKER_POLL_MS={poll_ms}
 export BURNER_WORKER_SAMPLE_MS={sample_ms}
+export BURNER_WORKER_LOCAL_SAMPLE_DIR="${{BURNER_WORKER_LOCAL_SAMPLE_DIR:-/tmp}}"
 export BURNER_CONDA_ENV={conda_env}
 export BURNER_CONDA_ROOT="${{BURNER_CONDA_ROOT:-/scratch/${{USER}}/miniconda3}}"
 export BURNER_ENV_PYTHON="${{BURNER_CONDA_ROOT}}/envs/${{BURNER_CONDA_ENV}}/bin/python"
@@ -832,6 +890,165 @@ async def _run_command(args: list[str]) -> tuple[str, str, int]:
         stderr_bytes.decode("utf-8", errors="replace"),
         process.returncode,
     )
+
+
+def _read_load_sample_file(path: Path) -> list[LoadSample]:
+    samples: list[LoadSample] = []
+    try:
+        with path.open("r", newline="", encoding="utf-8") as handle:
+            reader = csv.DictReader(handle)
+            for row in reader:
+                timestamp = row.get("timestamp", "")
+                timestamp_ms = _parse_iso_ms(timestamp)
+                if timestamp_ms is None:
+                    continue
+                cpu_watts = _parse_optional_float(row.get("cpu_watts"))
+                cpu_watts_estimated = _parse_optional_float(row.get("cpu_watts_estimated"))
+                watts = cpu_watts if cpu_watts is not None else cpu_watts_estimated
+                if watts is None:
+                    continue
+                samples.append(
+                    LoadSample(
+                        timestamp_ms=timestamp_ms,
+                        timestamp=timestamp,
+                        watts=watts,
+                        cpu_watts=cpu_watts,
+                        cpu_watts_estimated=cpu_watts_estimated,
+                        cpu_utilization_percent=_parse_optional_float(row.get("cpu_utilization_percent")),
+                        cpu_freq_mhz_avg=_parse_optional_float(row.get("cpu_freq_mhz_avg")),
+                        cpu_freq_mhz_min=_parse_optional_float(row.get("cpu_freq_mhz_min")),
+                        cpu_freq_mhz_max=_parse_optional_float(row.get("cpu_freq_mhz_max")),
+                        loadavg_1m=_parse_optional_float(row.get("loadavg_1m")),
+                    )
+                )
+    except OSError:
+        return []
+    return sorted(samples, key=lambda sample: sample.timestamp_ms)
+
+
+def _downsample_load_samples(samples: list[LoadSample], max_points: int) -> list[LoadSample]:
+    if len(samples) <= max_points:
+        return samples
+    bucket_size = math.ceil(len(samples) / max_points)
+    return [
+        _average_load_samples(samples[index : index + bucket_size])
+        for index in range(0, len(samples), bucket_size)
+    ][:max_points]
+
+
+def _average_load_samples(samples: list[LoadSample]) -> LoadSample:
+    timestamp_ms = round(sum(sample.timestamp_ms for sample in samples) / len(samples))
+    return LoadSample(
+        timestamp_ms=timestamp_ms,
+        timestamp=_iso_from_ms(timestamp_ms),
+        watts=_mean_required(sample.watts for sample in samples),
+        cpu_watts=_mean_optional(sample.cpu_watts for sample in samples),
+        cpu_watts_estimated=_mean_optional(sample.cpu_watts_estimated for sample in samples),
+        cpu_utilization_percent=_mean_optional(sample.cpu_utilization_percent for sample in samples),
+        cpu_freq_mhz_avg=_mean_optional(sample.cpu_freq_mhz_avg for sample in samples),
+        cpu_freq_mhz_min=_mean_optional(sample.cpu_freq_mhz_min for sample in samples),
+        cpu_freq_mhz_max=_mean_optional(sample.cpu_freq_mhz_max for sample in samples),
+        loadavg_1m=_mean_optional(sample.loadavg_1m for sample in samples),
+    )
+
+
+def _cluster_load_points(samples_by_node: dict[str, list[LoadSample]], max_points: int) -> list[dict[str, object]]:
+    non_empty = [samples for samples in samples_by_node.values() if samples]
+    if not non_empty:
+        return []
+    start_ms = min(samples[0].timestamp_ms for samples in non_empty)
+    end_ms = max(samples[-1].timestamp_ms for samples in non_empty)
+    if end_ms <= start_ms:
+        return [
+            {
+                "timestamp": _iso_from_ms(start_ms),
+                "watts": round(sum(samples[0].watts for samples in non_empty), 6),
+                "nodes_reported": len(non_empty),
+            }
+        ]
+
+    step_ms = max(50, math.ceil((end_ms - start_ms) / max(1, max_points - 1)))
+    node_indexes = {node_id: 0 for node_id in samples_by_node}
+    points = []
+    current_ms = start_ms
+    while current_ms <= end_ms:
+        total = 0.0
+        nodes_reported = 0
+        for node_id, samples in samples_by_node.items():
+            index = node_indexes[node_id]
+            while index + 1 < len(samples) and samples[index + 1].timestamp_ms <= current_ms:
+                index += 1
+            node_indexes[node_id] = index
+            if samples[0].timestamp_ms <= current_ms <= samples[-1].timestamp_ms:
+                total += samples[index].watts
+                nodes_reported += 1
+        if nodes_reported:
+            points.append(
+                {
+                    "timestamp": _iso_from_ms(current_ms),
+                    "watts": round(total, 6),
+                    "nodes_reported": nodes_reported,
+                }
+            )
+        current_ms += step_ms
+
+    if len(points) > max_points:
+        return points[:max_points]
+    return points
+
+
+def _load_sample_to_dict(sample: LoadSample) -> dict[str, object]:
+    return {
+        "timestamp": sample.timestamp,
+        "watts": round(sample.watts, 6),
+        "cpu_watts": _round_optional(sample.cpu_watts),
+        "cpu_watts_estimated": _round_optional(sample.cpu_watts_estimated),
+        "cpu_utilization_percent": _round_optional(sample.cpu_utilization_percent),
+        "cpu_freq_mhz_avg": _round_optional(sample.cpu_freq_mhz_avg),
+        "cpu_freq_mhz_min": _round_optional(sample.cpu_freq_mhz_min),
+        "cpu_freq_mhz_max": _round_optional(sample.cpu_freq_mhz_max),
+        "loadavg_1m": _round_optional(sample.loadavg_1m),
+    }
+
+
+def _parse_optional_float(value: object) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_iso_ms(value: str) -> int | None:
+    if not value or not value.endswith("Z"):
+        return None
+    try:
+        return round(datetime.fromisoformat(value[:-1] + "+00:00").timestamp() * 1000)
+    except ValueError:
+        return None
+
+
+def _iso_from_ms(value: int) -> str:
+    return datetime.fromtimestamp(value / 1000.0, UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _mean_required(values) -> float:
+    items = [float(value) for value in values]
+    return round(sum(items) / len(items), 6)
+
+
+def _mean_optional(values) -> float | None:
+    items = [float(value) for value in values if value is not None]
+    if not items:
+        return None
+    return round(sum(items) / len(items), 6)
+
+
+def _round_optional(value: float | None) -> float | None:
+    if value is None:
+        return None
+    return round(float(value), 6)
 
 
 def _session_from_dict(raw: dict[str, Any]) -> SlurmSession | None:

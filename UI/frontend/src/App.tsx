@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import AllocationPanel from "./components/AllocationPanel";
 import BurnPanel from "./components/BurnPanel";
 import ClusterPowerChart from "./components/ClusterPowerChart";
@@ -9,12 +9,13 @@ import {
   extractErrorMessage,
   fetchAllocation,
   fetchBurnStatus,
+  fetchLoadSeries,
   fetchMachines,
   fetchWaveforms,
   openEventSocket
 } from "./api/client";
 import { AppStateContext, initialState, reducer } from "./state/AppState";
-import type { SlurmAllocation, WsEvent } from "./types";
+import type { LoadSeries, SlurmAllocation, WsEvent } from "./types";
 
 interface Toast {
   id: number;
@@ -30,6 +31,10 @@ export default function App() {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [theme, setTheme] = useState<ThemeMode>(() => getInitialTheme());
   const [refreshMs, setRefreshMs] = useState(() => getInitialRefreshMs());
+  const [loadSeries, setLoadSeries] = useState<LoadSeries | null>(null);
+  const [loadSeriesLoading, setLoadSeriesLoading] = useState(false);
+  const previousBurnJobCount = useRef(0);
+  const loadSeriesRequest = useRef(0);
 
   const addToast = useCallback((message: string, kind: Toast["kind"] = "info") => {
     const id = Date.now() + Math.random();
@@ -206,6 +211,11 @@ export default function App() {
   }, [handleWsEvent]);
 
   const machines = useMemo(() => Object.values(state.machines), [state.machines]);
+  const burnJobCount = Object.keys(state.burnJobs).length;
+  const loadSeriesByNode = useMemo(
+    () => new Map((loadSeries?.nodes ?? []).map((node) => [node.node_id, node])),
+    [loadSeries]
+  );
   const connectedCount = useMemo(
     () => machines.filter((machine) => machine.connectionStatus === "connected").length,
     [machines]
@@ -223,6 +233,60 @@ export default function App() {
     (job) => job.started_at <= Date.now() / 1000 && Date.now() / 1000 < job.started_at + job.duration_seconds
   ).length;
   const scheduledJobs = Object.values(state.burnJobs).filter((job) => job.started_at > Date.now() / 1000).length;
+
+  useEffect(() => {
+    if (burnJobCount > 0) {
+      previousBurnJobCount.current = burnJobCount;
+      setLoadSeries(null);
+      setLoadSeriesLoading(false);
+      return;
+    }
+    if (previousBurnJobCount.current === 0) {
+      return;
+    }
+
+    previousBurnJobCount.current = 0;
+    let cancelled = false;
+    let timer: number | undefined;
+    let attempts = 0;
+    const requestId = loadSeriesRequest.current + 1;
+    loadSeriesRequest.current = requestId;
+    setLoadSeriesLoading(true);
+
+    const load = () => {
+      attempts += 1;
+      void fetchLoadSeries()
+        .then((series) => {
+          if (!cancelled && loadSeriesRequest.current === requestId) {
+            setLoadSeries(series);
+            setLoadSeriesLoading(false);
+          }
+        })
+        .catch(() => {
+          if (!cancelled && attempts < 60) {
+            timer = window.setTimeout(load, 500);
+            return;
+          }
+          if (!cancelled && loadSeriesRequest.current === requestId) {
+            setLoadSeriesLoading(false);
+          }
+        });
+    };
+
+    timer = window.setTimeout(load, 500);
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) {
+        window.clearTimeout(timer);
+      }
+    };
+  }, [burnJobCount]);
+
+  useEffect(() => {
+    if (allocation.active && allocation.session_id && loadSeries?.session_id !== allocation.session_id) {
+      setLoadSeries(null);
+    }
+  }, [allocation.active, allocation.session_id, loadSeries?.session_id]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -286,7 +350,12 @@ export default function App() {
           <StatusTile label="Active Jobs" value={activeJobs} detail={scheduledJobs > 0 ? `${scheduledJobs} scheduled` : "idle"} />
         </section>
 
-        <ClusterPowerChart machines={machines} />
+        <ClusterPowerChart
+          machines={machines}
+          loadSeries={loadSeries}
+          loading={loadSeriesLoading}
+          burnActive={burnJobCount > 0}
+        />
 
         <AllocationPanel
           allocation={allocation}
@@ -312,7 +381,13 @@ export default function App() {
           ) : (
             <div className="machine-grid">
               {machines.map((machine) => (
-                <MachineCard key={machine.config.id} machine={machine} showPowerChart={showMachinePowerCharts} />
+                <MachineCard
+                  key={machine.config.id}
+                  machine={machine}
+                  showPowerChart={showMachinePowerCharts}
+                  loadSeries={loadSeriesByNode.get(machine.config.id)}
+                  loadSeriesLoading={loadSeriesLoading}
+                />
               ))}
             </div>
           )}

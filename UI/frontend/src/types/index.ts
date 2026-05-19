@@ -99,6 +99,36 @@ export interface JobInfo {
   sync_mode?: SyncMode;
 }
 
+export interface LoadSeriesPoint {
+  timestamp: string;
+  watts: number;
+  cpu_watts?: number | null;
+  cpu_watts_estimated?: number | null;
+  cpu_utilization_percent?: number | null;
+  cpu_freq_mhz_avg?: number | null;
+  cpu_freq_mhz_min?: number | null;
+  cpu_freq_mhz_max?: number | null;
+  loadavg_1m?: number | null;
+  nodes_reported?: number;
+}
+
+export interface NodeLoadSeries {
+  node_id: string;
+  sample_count: number;
+  points: LoadSeriesPoint[];
+}
+
+export interface LoadSeries {
+  session_id: string;
+  job_id: string;
+  generated_at: string;
+  nodes: NodeLoadSeries[];
+  cluster: {
+    sample_count: number;
+    points: LoadSeriesPoint[];
+  };
+}
+
 export interface AppState {
   machines: Record<string, MachineState>;
   waveforms: WaveformInfo[];

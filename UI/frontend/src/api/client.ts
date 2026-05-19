@@ -2,6 +2,7 @@ import axios from "axios";
 import type {
   BurnStartRequest,
   JobInfo,
+  LoadSeries,
   MachineApiRecord,
   Point,
   SlurmAllocation,
@@ -125,6 +126,13 @@ export async function downloadLoadCsv(): Promise<void> {
   link.click();
   link.remove();
   window.setTimeout(() => window.URL.revokeObjectURL(href), 0);
+}
+
+export async function fetchLoadSeries(maxPoints = 1200): Promise<LoadSeries> {
+  const { data } = await http.get<LoadSeries>("/slurm/load-series", {
+    params: { max_points: maxPoints }
+  });
+  return data;
 }
 
 export async function runUpdate(id: string): Promise<void> {

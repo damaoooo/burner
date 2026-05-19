@@ -1,6 +1,7 @@
 import asyncio
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -16,13 +17,17 @@ from slurm_controller import (  # noqa: E402
     validate_poll_ms,
     validate_sample_ms,
 )
+import slurm_worker  # noqa: E402
 from slurm_worker import (  # noqa: E402
+    BURN_SAMPLE_SECONDS,
     SHAHEEN_CPU_TDP_WATTS,
+    Worker,
     cpu_utilization_percent,
     estimate_cpu_watts,
     read_cpu_frequency_summary,
     detect_cpu_tdp_watts,
 )
+from warpper.watcher_core import PowerSample  # noqa: E402
 from waveform_store import WaveformStore  # noqa: E402
 
 
@@ -45,6 +50,7 @@ def test_render_sbatch_script_uses_minimal_shaheen_options(tmp_path):
     assert "--qos" not in script
     assert "${BURNER_CONDA_ROOT}/bin/python3" in script
     assert "BURNER_WORKER_SAMPLE_MS=200" in script
+    assert "BURNER_WORKER_LOCAL_SAMPLE_DIR=\"${BURNER_WORKER_LOCAL_SAMPLE_DIR:-/tmp}\"" in script
     assert "command -v python3" in script
     assert "Using worker python:" in script
     assert "srun --ntasks=\"${SLURM_NNODES}\" --ntasks-per-node=1" in script
@@ -77,6 +83,7 @@ def test_validate_sample_ms_defaults_to_30ms_floor():
 def test_shaheen_cpu_tdp_is_fixed_per_socket_value():
     assert SHAHEEN_CPU_TDP_WATTS == 360.0
     assert detect_cpu_tdp_watts() == 360.0
+    assert BURN_SAMPLE_SECONDS == 0.05
 
 
 def test_runtime_metric_helpers_report_frequency_utilization_and_estimated_watts(tmp_path):
@@ -249,6 +256,77 @@ def test_export_load_csv_uses_latest_released_session(tmp_path):
     asyncio.run(run_test())
 
 
+def test_load_series_reads_finished_node_csv_and_builds_cluster_series(tmp_path):
+    async def run_test():
+        controller = SlurmController(
+            WaveformStore(custom_dir=tmp_path / "waveforms"),
+            broadcast=lambda payload: async_noop(payload),
+            control_base=tmp_path / "control",
+            repo_root=ROOT,
+            conda_env="burner",
+            slurm_client=FakeSlurmClient(),
+        )
+        await controller.submit_allocation(nodes=2, time_limit="05:00:00", poll_ms=10)
+        session_dir = Path((await controller.allocation_status())["session_dir"])
+        write_sample(session_dir, "nid001", [100.0, 200.0, 300.0])
+        write_sample(session_dir, "nid002", [10.0, 20.0, 30.0])
+
+        series = controller.load_series(max_points=10)
+
+        assert series["session_id"]
+        assert [node["node_id"] for node in series["nodes"]] == ["nid001", "nid002"]
+        assert series["nodes"][0]["sample_count"] == 3
+        assert series["nodes"][0]["points"][0]["watts"] == 100.0
+        assert series["cluster"]["sample_count"] == 6
+        assert series["cluster"]["points"][0]["watts"] == 110.0
+
+    asyncio.run(run_test())
+
+
+def test_worker_writes_burn_samples_to_local_tmp_until_finalize(tmp_path, monkeypatch):
+    monkeypatch.setenv("SLURMD_NODENAME", "nidtest")
+    monkeypatch.setattr(
+        slurm_worker,
+        "collect_hw_info",
+        lambda: {"cpu_count": 128, "cpu_tdp_total_watts": 720.0},
+    )
+    monkeypatch.setattr(slurm_worker, "read_cpu_times", lambda: (100, 200))
+    monkeypatch.setattr(
+        slurm_worker,
+        "collect_runtime_metrics",
+        lambda previous, hw_info: {
+            "_cpu_times": (150, 400),
+            "cpu_utilization_percent": 50.0,
+            "cpu_watts_estimated": 360.0,
+            "cpu_freq_mhz_avg": 2400.0,
+            "cpu_freq_mhz_min": 2400.0,
+            "cpu_freq_mhz_max": 2400.0,
+            "loadavg_1m": 128.0,
+        },
+    )
+    monkeypatch.setattr(Worker, "_build_sampler", lambda self: FakeSampler())
+    session_dir = tmp_path / "session"
+    worker = Worker(
+        session_dir=session_dir,
+        repo_root=ROOT,
+        poll_ms=10,
+        sample_ms=200,
+        local_sample_dir=tmp_path / "local",
+    )
+    worker._prepare_dirs()
+    worker._reset_samples()
+    worker._sample_power(write_local=True)
+
+    assert worker.local_sample_path.exists()
+    assert not worker.sample_path.exists()
+
+    worker._finalize_samples()
+
+    assert not worker.local_sample_path.exists()
+    assert worker.sample_path.exists()
+    assert "2026-05-19T00:00:00.000Z,,360.000000,50.000000" in worker.sample_path.read_text(encoding="utf-8")
+
+
 def write_node(session_dir: Path, node_id: str) -> None:
     path = session_dir / "nodes" / f"{node_id}.json"
     path.write_text(
@@ -272,8 +350,31 @@ def write_node(session_dir: Path, node_id: str) -> None:
     )
 
 
+def write_sample(session_dir: Path, node_id: str, watts_values: list[float]) -> None:
+    sample_path = session_dir / "samples" / f"{node_id}.csv"
+    lines = [
+        "timestamp,cpu_watts,cpu_watts_estimated,cpu_utilization_percent,cpu_freq_mhz_avg,cpu_freq_mhz_min,cpu_freq_mhz_max,loadavg_1m"
+    ]
+    for index, watts in enumerate(watts_values):
+        lines.append(
+            f"2026-05-19T00:00:00.{index * 50:03d}Z,,{watts:.6f},50.000000,2400.000000,2400.000000,2400.000000,128.000000"
+        )
+    sample_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 async def async_noop(payload):
     del payload
+
+
+class FakeSampler:
+    status = "test sampler"
+
+    def sample(self):
+        return PowerSample(
+            timestamp=datetime(2026, 5, 19, tzinfo=timezone.utc),
+            cpu_watts=None,
+            gpu_watts=None,
+        )
 
 
 class FakeSlurmClient:

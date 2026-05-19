@@ -136,6 +136,14 @@ async def download_load_csv():
     )
 
 
+@app.get("/api/slurm/load-series")
+async def load_series(max_points: int = 1200):
+    try:
+        return slurm_controller.load_series(max_points=max_points)
+    except SlurmError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @app.get("/api/machines")
 async def list_machines():
     return await slurm_controller.list_machines()

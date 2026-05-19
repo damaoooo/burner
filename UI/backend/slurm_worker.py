@@ -4,11 +4,13 @@ import csv
 import json
 import os
 import signal
+import shutil
 import socket
 import subprocess
 import sys
 import time
 import uuid
+from contextlib import suppress
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -18,7 +20,7 @@ UTC = timezone.utc
 DEFAULT_POLL_MS = 10
 HEARTBEAT_SECONDS = 1.0
 DEFAULT_SAMPLE_MS = 200
-CSV_WRITE_SECONDS = 1.0
+BURN_SAMPLE_SECONDS = 0.05
 CPU_FREQ_SAMPLE_LIMIT = 8
 SHAHEEN_CPU_TDP_WATTS = 360.0
 
@@ -31,7 +33,14 @@ class NullGpuSampler:
 
 
 class Worker:
-    def __init__(self, session_dir: Path, repo_root: Path, poll_ms: int, sample_ms: int):
+    def __init__(
+        self,
+        session_dir: Path,
+        repo_root: Path,
+        poll_ms: int,
+        sample_ms: int,
+        local_sample_dir: Path | None = None,
+    ):
         self.session_dir = session_dir
         self.repo_root = repo_root
         self.poll_seconds = max(0.001, poll_ms / 1000.0)
@@ -40,6 +49,11 @@ class Worker:
         self.hostname = socket.gethostname()
         self.node_path = self.session_dir / "nodes" / f"{self.node_id}.json"
         self.sample_path = self.session_dir / "samples" / f"{self.node_id}.csv"
+        local_dir = Path(
+            local_sample_dir
+            or os.environ.get("BURNER_WORKER_LOCAL_SAMPLE_DIR", "/tmp")
+        )
+        self.local_sample_path = local_dir / f"burner-{self.session_dir.name}-{self.node_id}.csv"
         self.log_dir = self.session_dir / "logs"
         self.status = "initializing"
         self.message = ""
@@ -50,7 +64,6 @@ class Worker:
         self.burner: subprocess.Popen[str] | None = None
         self.burner_job_sequence: int | None = None
         self.burner_start_at: float | None = None
-        self._last_csv_write = 0.0
         self._stop = False
         self._sampler = self._build_sampler()
 
@@ -61,22 +74,23 @@ class Worker:
         self.status = "ready"
         self._write_state()
 
-        next_heartbeat = 0.0
         next_sample = 0.0
+        next_state = 0.0
         while not self._stop:
             now = time.monotonic()
             self._handle_command()
             self._poll_burner()
             if now >= next_sample:
-                self._sample_power()
+                burn_active = self._burn_is_active()
+                self._sample_power(write_local=burn_active)
+                next_sample = now + (BURN_SAMPLE_SECONDS if self.burner is not None else self.sample_seconds)
+            if now >= next_state:
                 self._write_state()
-                next_sample = now + self.sample_seconds
-            if now >= next_heartbeat:
-                self._write_state()
-                next_heartbeat = now + HEARTBEAT_SECONDS
+                next_state = now + HEARTBEAT_SECONDS
             time.sleep(self.poll_seconds)
 
         self._stop_burner()
+        self._finalize_samples()
         self.status = "stopped"
         self._write_state()
         return 0
@@ -85,10 +99,12 @@ class Worker:
         for relative in ("nodes", "samples", "logs"):
             (self.session_dir / relative).mkdir(parents=True, exist_ok=True)
 
-    def _write_sample_header(self) -> None:
-        if self.sample_path.exists():
+    def _write_sample_header(self, path: Path | None = None) -> None:
+        path = path or self.local_sample_path
+        if path.exists():
             return
-        with self.sample_path.open("w", newline="", encoding="utf-8") as handle:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.writer(handle)
             writer.writerow(
                 [
@@ -122,10 +138,12 @@ class Worker:
             self._start_burner(command, sequence)
         elif action == "stop":
             self._stop_burner()
+            self._finalize_samples()
             self.status = "ready"
             self.message = ""
         elif action == "release":
             self._stop_burner()
+            self._finalize_samples()
             self._stop = True
         self.last_sequence = sequence
         self._write_state()
@@ -210,8 +228,17 @@ class Worker:
         self.burner = None
         self.burner_job_sequence = None
         self.burner_start_at = None
+        self._finalize_samples()
 
-    def _sample_power(self) -> None:
+    def _burn_is_active(self) -> bool:
+        return (
+            self.burner is not None
+            and self.burner.poll() is None
+            and self.burner_start_at is not None
+            and time.time() >= self.burner_start_at
+        )
+
+    def _sample_power(self, write_local: bool) -> None:
         try:
             sample = self._sampler.sample()
         except Exception as exc:
@@ -238,10 +265,10 @@ class Worker:
             "status": runtime_status(self._sampler.status, watts_source),
             **metrics,
         }
-        if time.monotonic() - self._last_csv_write < CSV_WRITE_SECONDS:
+        if not write_local:
             return
-        self._last_csv_write = time.monotonic()
-        with self.sample_path.open("a", newline="", encoding="utf-8") as handle:
+        self._write_sample_header(self.local_sample_path)
+        with self.local_sample_path.open("a", newline="", encoding="utf-8") as handle:
             writer = csv.writer(handle)
             writer.writerow(
                 [
@@ -258,12 +285,26 @@ class Worker:
 
     def _reset_samples(self) -> None:
         self._previous_cpu_times = read_cpu_times()
-        self._last_csv_write = 0.0
+        for path in (self.local_sample_path, self.sample_path):
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+        self._write_sample_header(self.local_sample_path)
+
+    def _finalize_samples(self) -> None:
+        if not self.local_sample_path.exists():
+            return
+        self.sample_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = self.sample_path.with_name(f".{self.sample_path.name}.{uuid.uuid4().hex}.tmp")
         try:
-            self.sample_path.unlink()
-        except FileNotFoundError:
-            pass
-        self._write_sample_header()
+            shutil.copyfile(self.local_sample_path, tmp_path)
+            tmp_path.replace(self.sample_path)
+            self.local_sample_path.unlink()
+        except OSError as exc:
+            with suppress(OSError):
+                tmp_path.unlink()
+            self.message = f"failed to move local samples to shared storage: {exc}"
 
     def _write_state(self) -> None:
         payload: dict[str, object] = {

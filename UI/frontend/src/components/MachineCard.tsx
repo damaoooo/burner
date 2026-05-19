@@ -1,54 +1,23 @@
-import { useEffect, useState } from "react";
 import TelemetryLineChart from "./TelemetryLineChart";
 import { useAppState } from "../state/AppState";
-import type { MachineState } from "../types";
+import type { MachineState, NodeLoadSeries } from "../types";
 
 interface Props {
   machine: MachineState;
   showPowerChart: boolean;
+  loadSeries?: NodeLoadSeries;
+  loadSeriesLoading: boolean;
 }
 
-interface PowerPoint {
-  timestamp: string;
-  label: string;
-  watts: number;
-}
-
-export default function MachineCard({ machine, showPowerChart }: Props) {
+export default function MachineCard({ machine, showPowerChart, loadSeries, loadSeriesLoading }: Props) {
   const { state } = useAppState();
   const machineJobs = Object.values(state.burnJobs).filter((job) => job.machine_id === machine.config.id);
   const isBurning = machineJobs.length > 0;
-  const activeJobKey = machineJobs.map((job) => job.job_id).sort().join(",");
   const hw = machine.hwInfo;
   const latestPower = hw?.latest_power;
-  const [powerHistory, setPowerHistory] = useState<PowerPoint[]>([]);
   const displayWatts =
     latestPower?.cpu_watts_display ?? latestPower?.cpu_watts ?? latestPower?.cpu_watts_estimated ?? null;
-
-  useEffect(() => {
-    setPowerHistory([]);
-  }, [machine.config.id, activeJobKey]);
-
-  useEffect(() => {
-    const timestamp = latestPower?.timestamp;
-    if (!timestamp || displayWatts == null) {
-      return;
-    }
-    setPowerHistory((current) => {
-      if (current[current.length - 1]?.timestamp === timestamp) {
-        return current;
-      }
-      const next = [
-        ...current,
-        {
-          timestamp,
-          label: formatTimeLabel(timestamp),
-          watts: displayWatts
-        }
-      ];
-      return next.slice(-60);
-    });
-  }, [displayWatts, latestPower?.timestamp]);
+  const chartPoints = loadSeries?.points ?? [];
 
   return (
     <article className={`machine-card ${isBurning ? "burning" : ""}`}>
@@ -120,13 +89,14 @@ export default function MachineCard({ machine, showPowerChart }: Props) {
         <div className="power-chart-panel">
           <div className="power-chart-header">
             <span>{latestPower?.cpu_watts_source === "rapl" ? "CPU Power" : "Estimated CPU Power"}</span>
-            <span>{powerHistory.length ? `${powerHistory.length} samples` : "waiting"}</span>
+            <span>{loadSeries ? `${loadSeries.sample_count} CSV samples` : chartStatus(loadSeriesLoading, isBurning)}</span>
           </div>
           <div className="power-chart">
             <TelemetryLineChart
-              points={powerHistory.map((point) => ({ label: point.label, value: point.watts }))}
+              points={chartPoints.map((point) => ({ label: formatTimeLabel(point.timestamp), value: point.watts }))}
               yMax={Math.max(hw?.cpu_tdp_total_watts ?? machine.config.cpu_tdp ?? 1, 1)}
               yAxisLabel={latestPower?.cpu_watts_source === "rapl" ? "CPU Power (W)" : "Estimated CPU Power (W)"}
+              emptyText={chartEmptyText(loadSeriesLoading, isBurning)}
             />
           </div>
         </div>
@@ -180,6 +150,26 @@ function formatFrequency(avg: number | null | undefined, min: number | null | un
     return `${avg.toFixed(0)} MHz`;
   }
   return `${avg.toFixed(0)} MHz (${min.toFixed(0)}-${max.toFixed(0)})`;
+}
+
+function chartStatus(loading: boolean, burning: boolean): string {
+  if (loading) {
+    return "loading CSV";
+  }
+  if (burning) {
+    return "waiting for finish";
+  }
+  return "no CSV samples";
+}
+
+function chartEmptyText(loading: boolean, burning: boolean): string {
+  if (loading) {
+    return "Loading completed CSV samples";
+  }
+  if (burning) {
+    return "Chart will render from CSV after burn completion";
+  }
+  return "Waiting for completed CSV samples";
 }
 
 function formatTimeLabel(timestamp: string): string {
