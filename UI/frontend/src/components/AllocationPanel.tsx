@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { extractErrorMessage, releaseAllocation, submitAllocation } from "../api/client";
+import { downloadLoadCsv, extractErrorMessage, releaseAllocation, submitAllocation } from "../api/client";
 import { useAppState } from "../state/AppState";
 import type { SlurmAllocation } from "../types";
 
@@ -17,6 +17,7 @@ export default function AllocationPanel({ allocation, refreshMs, onRefreshMsChan
   const [timeLimit, setTimeLimit] = useState("05:00:00");
   const [submitting, setSubmitting] = useState(false);
   const [releasing, setReleasing] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const pollMs = parsePollMs(state.samplingMs);
   const active = allocation.active;
 
@@ -59,6 +60,18 @@ export default function AllocationPanel({ allocation, refreshMs, onRefreshMsChan
       onToast(extractErrorMessage(error), "error");
     } finally {
       setReleasing(false);
+    }
+  }
+
+  async function handleDownloadCsv() {
+    setDownloading(true);
+    try {
+      await downloadLoadCsv();
+      onToast("Load CSV download started.", "success");
+    } catch (error) {
+      onToast(extractErrorMessage(error), "error");
+    } finally {
+      setDownloading(false);
     }
   }
 
@@ -138,6 +151,14 @@ export default function AllocationPanel({ allocation, refreshMs, onRefreshMsChan
             onClick={() => void handleRelease()}
           >
             {releasing ? "Releasing" : "Release Nodes"}
+          </button>
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={downloading}
+            onClick={() => void handleDownloadCsv()}
+          >
+            {downloading ? "Downloading" : "Download Load CSV"}
           </button>
         </div>
       </div>

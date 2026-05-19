@@ -106,6 +106,27 @@ export async function releaseAllocation(): Promise<SlurmAllocation> {
   return data;
 }
 
+export async function downloadLoadCsv(): Promise<void> {
+  let response;
+  try {
+    response = await http.get<Blob>("/slurm/load.csv", { responseType: "blob" });
+  } catch (error) {
+    const message = await extractBlobErrorMessage(error);
+    if (message) {
+      throw new Error(message);
+    }
+    throw error;
+  }
+  const href = window.URL.createObjectURL(response.data);
+  const link = document.createElement("a");
+  link.href = href;
+  link.download = filenameFromDisposition(response.headers["content-disposition"]) ?? "burner-load.csv";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => window.URL.revokeObjectURL(href), 0);
+}
+
 export async function runUpdate(id: string): Promise<void> {
   await http.post(`/update/${encodeURIComponent(id)}`);
 }
@@ -131,6 +152,27 @@ export function extractErrorMessage(error: unknown): string {
     return error.message;
   }
   return String(error);
+}
+
+function filenameFromDisposition(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const match = /filename="?([^";]+)"?/i.exec(value);
+  return match?.[1];
+}
+
+async function extractBlobErrorMessage(error: unknown): Promise<string | undefined> {
+  if (!axios.isAxiosError(error) || !(error.response?.data instanceof Blob)) {
+    return undefined;
+  }
+  try {
+    const text = await error.response.data.text();
+    const parsed = JSON.parse(text) as { detail?: unknown };
+    return typeof parsed.detail === "string" ? parsed.detail : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function openEventSocket(

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import json
 import os
 import re
@@ -35,6 +37,19 @@ DEFAULT_CONTROL_BASE = Path("/scratch/zhoul0e/burner-slurm-control")
 DEFAULT_CONDA_ENV = "burner"
 DEFAULT_START_LEAD_SECONDS = 2.0
 WORKER_STALE_SECONDS = 30.0
+LOAD_EXPORT_COLUMNS = [
+    "session_id",
+    "job_id",
+    "node_id",
+    "timestamp",
+    "cpu_watts",
+    "cpu_watts_estimated",
+    "cpu_utilization_percent",
+    "cpu_freq_mhz_avg",
+    "cpu_freq_mhz_min",
+    "cpu_freq_mhz_max",
+    "loadavg_1m",
+]
 
 _TIME_LIMIT_RE = re.compile(
     r"^([1-9][0-9]*|[0-9]+:[0-5]?[0-9](?::[0-5]?[0-9])?|[0-9]+-[0-9]+:[0-5]?[0-9](?::[0-5]?[0-9])?)$"
@@ -472,6 +487,49 @@ class SlurmController:
         await self._broadcast({"event": "allocation_changed", **payload})
         return payload
 
+    def export_load_csv(self) -> tuple[str, str]:
+        session = self._load_current_session() or self._latest_session()
+        if session is None:
+            raise SlurmError("no SLURM session samples are available")
+
+        sample_paths = sorted((session.session_dir / "samples").glob("*.csv"))
+        if not sample_paths:
+            raise SlurmError("no node sample CSV files are available for the latest SLURM session")
+
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=LOAD_EXPORT_COLUMNS)
+        writer.writeheader()
+        rows = 0
+        for sample_path in sample_paths:
+            node_id = sample_path.stem
+            try:
+                with sample_path.open("r", newline="", encoding="utf-8") as handle:
+                    reader = csv.DictReader(handle)
+                    for row in reader:
+                        if not row.get("timestamp"):
+                            continue
+                        writer.writerow(
+                            {
+                                "session_id": session.session_id,
+                                "job_id": session.job_id,
+                                "node_id": node_id,
+                                "timestamp": row.get("timestamp", ""),
+                                "cpu_watts": row.get("cpu_watts", ""),
+                                "cpu_watts_estimated": row.get("cpu_watts_estimated", ""),
+                                "cpu_utilization_percent": row.get("cpu_utilization_percent", ""),
+                                "cpu_freq_mhz_avg": row.get("cpu_freq_mhz_avg", ""),
+                                "cpu_freq_mhz_min": row.get("cpu_freq_mhz_min", ""),
+                                "cpu_freq_mhz_max": row.get("cpu_freq_mhz_max", ""),
+                                "loadavg_1m": row.get("loadavg_1m", ""),
+                            }
+                        )
+                        rows += 1
+            except OSError:
+                continue
+        if rows == 0:
+            raise SlurmError("no node load samples are available for the latest SLURM session")
+        return f"{session.session_id}-load.csv", output.getvalue()
+
     def status(self) -> list[dict[str, object]]:
         now = time.time()
         expired = [
@@ -603,6 +661,23 @@ class SlurmController:
         except (OSError, json.JSONDecodeError):
             return None
         return _session_from_dict(raw)
+
+    def _latest_session(self) -> SlurmSession | None:
+        if not self._control_base.exists():
+            return None
+        candidates: list[tuple[float, SlurmSession]] = []
+        for session_path in self._control_base.glob("shaheen-*/session.json"):
+            try:
+                raw = json.loads(session_path.read_text(encoding="utf-8"))
+                mtime = session_path.stat().st_mtime
+            except (OSError, json.JSONDecodeError):
+                continue
+            session = _session_from_dict(raw)
+            if session is not None:
+                candidates.append((mtime, session))
+        if not candidates:
+            return None
+        return max(candidates, key=lambda item: item[0])[1]
 
     def _write_current_session(self, session: SlurmSession) -> None:
         self._control_base.mkdir(parents=True, exist_ok=True)

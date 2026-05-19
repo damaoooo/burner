@@ -215,6 +215,40 @@ def test_start_rejects_gpu_requests(tmp_path):
     asyncio.run(run_test())
 
 
+def test_export_load_csv_uses_latest_released_session(tmp_path):
+    async def run_test():
+        controller = SlurmController(
+            WaveformStore(custom_dir=tmp_path / "waveforms"),
+            broadcast=lambda payload: async_noop(payload),
+            control_base=tmp_path / "control",
+            repo_root=ROOT,
+            conda_env="burner",
+            slurm_client=FakeSlurmClient(),
+        )
+        await controller.submit_allocation(nodes=1, time_limit="05:00:00", poll_ms=10)
+        session_dir = Path((await controller.allocation_status())["session_dir"])
+        sample_path = session_dir / "samples" / "nid001.csv"
+        sample_path.write_text(
+            "\n".join(
+                [
+                    "timestamp,cpu_watts,cpu_watts_estimated,cpu_utilization_percent,cpu_freq_mhz_avg,cpu_freq_mhz_min,cpu_freq_mhz_max,loadavg_1m",
+                    "2026-05-19T00:00:00.000Z,,360.000000,50.000000,2400.000000,2400.000000,2400.000000,128.000000",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        await controller.release_allocation()
+        filename, content = controller.export_load_csv()
+
+        assert filename.endswith("-load.csv")
+        assert "session_id,job_id,node_id,timestamp" in content
+        assert "nid001,2026-05-19T00:00:00.000Z,,360.000000,50.000000" in content
+
+    asyncio.run(run_test())
+
+
 def write_node(session_dir: Path, node_id: str) -> None:
     path = session_dir / "nodes" / f"{node_id}.json"
     path.write_text(
