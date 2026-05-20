@@ -38,7 +38,7 @@ DEFAULT_CONTROL_BASE = Path("/scratch/zhoul0e/burner-slurm-control")
 DEFAULT_CONDA_ENV = "burner"
 DEFAULT_START_LEAD_SECONDS = 2.0
 WORKER_STALE_SECONDS = 30.0
-NODE_CACHE_SECONDS = 1.0
+NODE_CACHE_SECONDS = 5.0
 LOAD_EXPORT_COLUMNS = [
     "session_id",
     "job_id",
@@ -695,7 +695,7 @@ class SlurmController:
             if session_id == session.session_id and now - cached_at <= NODE_CACHE_SECONDS:
                 return nodes
         nodes = self._read_nodes(session)
-        self._nodes_cache = (session.session_id, now, nodes)
+        self._nodes_cache = (session.session_id, time.monotonic(), nodes)
         return nodes
 
     def _read_load_samples(self, session: SlurmSession) -> dict[str, list[LoadSample]]:
