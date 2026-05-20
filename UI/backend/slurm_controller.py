@@ -39,6 +39,7 @@ DEFAULT_CONDA_ENV = "burner"
 DEFAULT_START_LEAD_SECONDS = 2.0
 WORKER_STALE_SECONDS = 30.0
 NODE_CACHE_SECONDS = 5.0
+TERMINAL_SLURM_STATES = {"COMPLETED", "CANCELLED", "FAILED", "TIMEOUT", "BOOT_FAIL", "UNKNOWN"}
 LOAD_EXPORT_COLUMNS = [
     "session_id",
     "job_id",
@@ -274,7 +275,7 @@ class SlurmController:
             current = self._load_current_session()
             if current is not None:
                 state = await self._slurm_state(current.job_id)
-                if state not in {"COMPLETED", "CANCELLED", "FAILED", "TIMEOUT", "BOOT_FAIL", "UNKNOWN"}:
+                if state not in TERMINAL_SLURM_STATES:
                     raise SlurmConflictError(
                         f"SLURM allocation {current.job_id} is still active ({state})"
                     )
@@ -340,6 +341,13 @@ class SlurmController:
             }
 
         slurm_state = await self._slurm_state(session.job_id)
+        active = slurm_state not in TERMINAL_SLURM_STATES
+        if not active:
+            self._clear_current_session()
+            return {
+                "active": False,
+                "status": slurm_state,
+            }
         nodes = self._read_nodes_cached(session)
         ready_count = len(
             [
@@ -350,7 +358,7 @@ class SlurmController:
             ]
         )
         return {
-            "active": slurm_state not in {"COMPLETED", "CANCELLED", "FAILED", "TIMEOUT", "BOOT_FAIL", "UNKNOWN"},
+            "active": active,
             "status": slurm_state,
             "session_id": session.session_id,
             "job_id": session.job_id,
@@ -772,6 +780,7 @@ class SlurmController:
             self._current_path.unlink()
         except FileNotFoundError:
             pass
+        self._nodes_cache = None
 
     def _write_session(self, session: SlurmSession) -> None:
         _atomic_write_json(session.session_dir / "session.json", session.to_dict())

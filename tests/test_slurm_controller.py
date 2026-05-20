@@ -190,6 +190,29 @@ def test_list_machines_paginates_and_allocation_omits_full_nodes(tmp_path):
     asyncio.run(run_test())
 
 
+def test_allocation_status_clears_manually_cancelled_session(tmp_path):
+    async def run_test():
+        client = FakeSlurmClient()
+        controller = SlurmController(
+            WaveformStore(custom_dir=tmp_path / "waveforms"),
+            broadcast=lambda payload: async_noop(payload),
+            control_base=tmp_path / "control",
+            repo_root=ROOT,
+            conda_env="burner",
+            slurm_client=client,
+        )
+        await controller.submit_allocation(nodes=2, time_limit="05:00:00", poll_ms=10)
+        client.state = "UNKNOWN"
+
+        status = await controller.allocation_status()
+
+        assert status == {"active": False, "status": "UNKNOWN"}
+        assert not (tmp_path / "control" / "current_session.json").exists()
+        assert await controller.list_machines() == []
+
+    asyncio.run(run_test())
+
+
 def test_start_fails_until_all_workers_are_ready(tmp_path):
     async def run_test():
         controller = SlurmController(
@@ -415,6 +438,7 @@ class FakeSlurmClient:
     def __init__(self):
         self.submitted = []
         self.cancelled = []
+        self.state = "RUNNING"
 
     async def submit_batch(self, script_path, nodes, time_limit, job_name, stdout_path, stderr_path):
         self.submitted.append(
@@ -431,7 +455,7 @@ class FakeSlurmClient:
 
     async def job_state(self, job_id):
         assert job_id == "4242"
-        return "RUNNING"
+        return self.state
 
     async def cancel(self, job_id):
         self.cancelled.append(job_id)

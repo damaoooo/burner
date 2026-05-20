@@ -167,13 +167,13 @@ export default function App() {
         ]);
         const currentAllocation = await fetchAllocation();
         setAllocation(currentAllocation);
-        dispatch({ type: "setMachines", machines });
+        dispatch({ type: "setMachines", machines: currentAllocation.active ? machines : [] });
         dispatch({ type: "setWaveforms", waveforms });
         const preferred = waveforms.find((waveform) => waveform.name === "sine") ?? waveforms[0];
         if (preferred) {
           dispatch({ type: "setGlobalWaveform", points: preferred.points, name: preferred.name });
         }
-        dispatch({ type: "setBurnJobs", jobs });
+        dispatch({ type: "setBurnJobs", jobs: currentAllocation.active ? jobs : [] });
       } catch (error) {
         addToast(extractErrorMessage(error), "error");
       }
@@ -190,8 +190,8 @@ export default function App() {
       inFlight = true;
       void Promise.all([fetchMachines(machinePage * MACHINE_PAGE_SIZE, MACHINE_PAGE_SIZE), fetchBurnStatus(), fetchAllocation()])
         .then(([machines, jobs, currentAllocation]) => {
-          dispatch({ type: "setMachines", machines });
-          dispatch({ type: "setBurnJobs", jobs });
+          dispatch({ type: "setMachines", machines: currentAllocation.active ? machines : [] });
+          dispatch({ type: "setBurnJobs", jobs: currentAllocation.active ? jobs : [] });
           setAllocation(currentAllocation);
         })
         .catch(() => undefined)
