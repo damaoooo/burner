@@ -24,6 +24,7 @@ interface Toast {
 }
 
 type ThemeMode = "light" | "dark";
+const MACHINE_PAGE_SIZE = 50;
 
 export default function App() {
   const [state, dispatch] = useReducer(reducer, initialState);
@@ -33,6 +34,7 @@ export default function App() {
   const [refreshMs, setRefreshMs] = useState(() => getInitialRefreshMs());
   const [loadSeries, setLoadSeries] = useState<LoadSeries | null>(null);
   const [loadSeriesLoading, setLoadSeriesLoading] = useState(false);
+  const [machinePage, setMachinePage] = useState(0);
   const previousBurnJobCount = useRef(0);
   const loadSeriesRequest = useRef(0);
 
@@ -212,6 +214,11 @@ export default function App() {
 
   const machines = useMemo(() => Object.values(state.machines), [state.machines]);
   const burnJobCount = Object.keys(state.burnJobs).length;
+  const machinePageCount = Math.max(1, Math.ceil(machines.length / MACHINE_PAGE_SIZE));
+  const visibleMachines = useMemo(
+    () => machines.slice(machinePage * MACHINE_PAGE_SIZE, (machinePage + 1) * MACHINE_PAGE_SIZE),
+    [machinePage, machines]
+  );
   const loadSeriesByNode = useMemo(
     () => new Map((loadSeries?.nodes ?? []).map((node) => [node.node_id, node])),
     [loadSeries]
@@ -220,6 +227,7 @@ export default function App() {
     () => machines.filter((machine) => machine.connectionStatus === "connected").length,
     [machines]
   );
+  const notReadyCount = Math.max(0, machines.length - connectedCount);
   const selectedCount = useMemo(
     () => machines.filter((machine) => machine.burnEnabled).length,
     [machines]
@@ -233,6 +241,10 @@ export default function App() {
     (job) => job.started_at <= Date.now() / 1000 && Date.now() / 1000 < job.started_at + job.duration_seconds
   ).length;
   const scheduledJobs = Object.values(state.burnJobs).filter((job) => job.started_at > Date.now() / 1000).length;
+
+  useEffect(() => {
+    setMachinePage((current) => Math.min(current, machinePageCount - 1));
+  }, [machinePageCount]);
 
   useEffect(() => {
     if (burnJobCount > 0) {
@@ -255,7 +267,7 @@ export default function App() {
 
     const load = () => {
       attempts += 1;
-      void fetchLoadSeries()
+      void fetchLoadSeries(1200, showMachinePowerCharts)
         .then((series) => {
           if (!cancelled && loadSeriesRequest.current === requestId) {
             setLoadSeries(series);
@@ -280,7 +292,7 @@ export default function App() {
         window.clearTimeout(timer);
       }
     };
-  }, [burnJobCount]);
+  }, [burnJobCount, showMachinePowerCharts]);
 
   useEffect(() => {
     if (allocation.active && allocation.session_id && loadSeries?.session_id !== allocation.session_id) {
@@ -379,17 +391,66 @@ export default function App() {
               Submit a SLURM allocation to start workers and populate node information.
             </div>
           ) : (
-            <div className="machine-grid">
-              {machines.map((machine) => (
-                <MachineCard
-                  key={machine.config.id}
-                  machine={machine}
-                  showPowerChart={showMachinePowerCharts}
-                  loadSeries={loadSeriesByNode.get(machine.config.id)}
-                  loadSeriesLoading={loadSeriesLoading}
-                />
-              ))}
-            </div>
+            <>
+              <div className="machine-toolbar">
+                <div className={`node-health ${notReadyCount === 0 ? "healthy" : "warning"}`}>
+                  <strong>{notReadyCount === 0 ? "All nodes online" : `${notReadyCount} nodes not ready`}</strong>
+                  <span>{connectedCount}/{machines.length} connected workers</span>
+                </div>
+                {machines.length > MACHINE_PAGE_SIZE && (
+                  <div className="machine-pagination">
+                    <span className="muted">
+                      Showing {machinePage * MACHINE_PAGE_SIZE + 1}-
+                      {Math.min((machinePage + 1) * MACHINE_PAGE_SIZE, machines.length)} of {machines.length}
+                    </span>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      disabled={machinePage === 0}
+                      onClick={() => setMachinePage(0)}
+                    >
+                      First
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      disabled={machinePage === 0}
+                      onClick={() => setMachinePage((current) => Math.max(0, current - 1))}
+                    >
+                      Previous
+                    </button>
+                    <span className="page-indicator">Page {machinePage + 1}/{machinePageCount}</span>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      disabled={machinePage >= machinePageCount - 1}
+                      onClick={() => setMachinePage((current) => Math.min(machinePageCount - 1, current + 1))}
+                    >
+                      Next
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      disabled={machinePage >= machinePageCount - 1}
+                      onClick={() => setMachinePage(machinePageCount - 1)}
+                    >
+                      Last
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div className="machine-grid">
+                {visibleMachines.map((machine) => (
+                  <MachineCard
+                    key={machine.config.id}
+                    machine={machine}
+                    showPowerChart={showMachinePowerCharts}
+                    loadSeries={loadSeriesByNode.get(machine.config.id)}
+                    loadSeriesLoading={loadSeriesLoading}
+                  />
+                ))}
+              </div>
+            </>
           )}
         </section>
 

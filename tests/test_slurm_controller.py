@@ -271,14 +271,20 @@ def test_load_series_reads_finished_node_csv_and_builds_cluster_series(tmp_path)
         write_sample(session_dir, "nid001", [100.0, 200.0, 300.0])
         write_sample(session_dir, "nid002", [10.0, 20.0, 30.0])
 
-        series = controller.load_series(max_points=10)
+        series = controller.load_series(max_points=10, include_nodes=True)
 
         assert series["session_id"]
+        assert series["node_count"] == 2
         assert [node["node_id"] for node in series["nodes"]] == ["nid001", "nid002"]
         assert series["nodes"][0]["sample_count"] == 3
         assert series["nodes"][0]["points"][0]["watts"] == 100.0
         assert series["cluster"]["sample_count"] == 6
         assert series["cluster"]["points"][0]["watts"] == 110.0
+
+        cluster_only = controller.load_series(max_points=10)
+        assert cluster_only["node_count"] == 2
+        assert cluster_only["nodes"] == []
+        assert cluster_only["cluster"]["points"][0]["watts"] == 110.0
 
     asyncio.run(run_test())
 

@@ -128,9 +128,9 @@ export async function downloadLoadCsv(): Promise<void> {
   window.setTimeout(() => window.URL.revokeObjectURL(href), 0);
 }
 
-export async function fetchLoadSeries(maxPoints = 1200): Promise<LoadSeries> {
+export async function fetchLoadSeries(maxPoints = 1200, includeNodes = false): Promise<LoadSeries> {
   const { data } = await http.get<LoadSeries>("/slurm/load-series", {
-    params: { max_points: maxPoints }
+    params: { max_points: maxPoints, include_nodes: includeNodes }
   });
   return data;
 }

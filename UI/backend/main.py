@@ -137,9 +137,9 @@ async def download_load_csv():
 
 
 @app.get("/api/slurm/load-series")
-async def load_series(max_points: int = 1200):
+async def load_series(max_points: int = 1200, include_nodes: bool = False):
     try:
-        return slurm_controller.load_series(max_points=max_points)
+        return slurm_controller.load_series(max_points=max_points, include_nodes=include_nodes)
     except SlurmError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

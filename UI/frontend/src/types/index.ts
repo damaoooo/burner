@@ -122,6 +122,7 @@ export interface LoadSeries {
   session_id: string;
   job_id: string;
   generated_at: string;
+  node_count?: number;
   nodes: NodeLoadSeries[];
   cluster: {
     sample_count: number;

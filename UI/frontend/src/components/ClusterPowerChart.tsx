@@ -43,7 +43,7 @@ function chartSubtitle(loadSeries: LoadSeries | null, loading: boolean, burnActi
     return "burn running; chart renders from CSV after completion";
   }
   if (loadSeries) {
-    return `${loadSeries.nodes.length} nodes, ${loadSeries.cluster.sample_count} CSV samples`;
+    return `${loadSeries.node_count ?? loadSeries.nodes.length} nodes, ${loadSeries.cluster.sample_count} CSV samples`;
   }
   return `${nodeCount} allocated nodes`;
 }

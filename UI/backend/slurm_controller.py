@@ -545,7 +545,7 @@ class SlurmController:
             raise SlurmError("no node load samples are available for the latest SLURM session")
         return f"{session.session_id}-load.csv", output.getvalue()
 
-    def load_series(self, max_points: int = 1200) -> dict[str, object]:
+    def load_series(self, max_points: int = 1200, include_nodes: bool = False) -> dict[str, object]:
         session = self._load_current_session() or self._latest_session()
         if session is None:
             raise SlurmError("no SLURM session samples are available")
@@ -556,22 +556,24 @@ class SlurmController:
             raise SlurmError("no node load samples are available for the latest SLURM session")
 
         nodes = []
-        for node_id, samples in sorted(samples_by_node.items()):
-            nodes.append(
-                {
-                    "node_id": node_id,
-                    "sample_count": len(samples),
-                    "points": [
-                        _load_sample_to_dict(sample)
-                        for sample in _downsample_load_samples(samples, max_points)
-                    ],
-                }
-            )
+        if include_nodes:
+            for node_id, samples in sorted(samples_by_node.items()):
+                nodes.append(
+                    {
+                        "node_id": node_id,
+                        "sample_count": len(samples),
+                        "points": [
+                            _load_sample_to_dict(sample)
+                            for sample in _downsample_load_samples(samples, max_points)
+                        ],
+                    }
+                )
 
         return {
             "session_id": session.session_id,
             "job_id": session.job_id,
             "generated_at": iso_z(datetime.now(UTC)),
+            "node_count": len(samples_by_node),
             "nodes": nodes,
             "cluster": {
                 "sample_count": sum(len(samples) for samples in samples_by_node.values()),
