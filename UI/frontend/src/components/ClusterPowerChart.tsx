@@ -3,12 +3,13 @@ import type { LoadSeries, MachineState } from "../types";
 
 interface Props {
   machines: MachineState[];
+  nodeCount: number;
   loadSeries: LoadSeries | null;
   loading: boolean;
   burnActive: boolean;
 }
 
-export default function ClusterPowerChart({ machines, loadSeries, loading, burnActive }: Props) {
+export default function ClusterPowerChart({ machines, nodeCount, loadSeries, loading, burnActive }: Props) {
   const points = loadSeries?.cluster.points ?? [];
   const latestWatts = points.at(-1)?.watts;
   const yMax = Math.max(maxPointWatts(points), totalClusterTdp(machines), 1);
@@ -18,7 +19,7 @@ export default function ClusterPowerChart({ machines, loadSeries, loading, burnA
       <div className="section-heading">
         <div>
           <h2>Cluster Estimated Power</h2>
-          <span className="muted">{chartSubtitle(loadSeries, loading, burnActive, machines.length)}</span>
+          <span className="muted">{chartSubtitle(loadSeries, loading, burnActive, nodeCount)}</span>
         </div>
         <strong>{latestWatts == null ? "-" : formatWatts(latestWatts)}</strong>
       </div>

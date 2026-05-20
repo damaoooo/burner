@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { extractErrorMessage, startBurn, stopBurn } from "../api/client";
+import { extractErrorMessage, fetchMachines, startBurn, stopBurn } from "../api/client";
 import { useAppState } from "../state/AppState";
-import type { BurnStartRequest, JobInfo, MachineState, RunMode, SyncMode } from "../types";
+import type { BurnStartRequest, JobInfo, MachineApiRecord, RunMode, SyncMode } from "../types";
 
 interface Props {
   onToast: (message: string, kind?: "info" | "error" | "success") => void;
+  readyNodeCount?: number;
+  totalNodeCount?: number;
 }
 
 interface PlannedWindow {
@@ -21,7 +23,7 @@ interface PendingStart {
   planned: PlannedWindow[];
 }
 
-export default function GlobalBurnBar({ onToast }: Props) {
+export default function GlobalBurnBar({ onToast, readyNodeCount, totalNodeCount }: Props) {
   const { state, dispatch } = useAppState();
   const [progressNow, setProgressNow] = useState(Date.now() / 1000);
   const [progressStartedAt, setProgressStartedAt] = useState<number | null>(null);
@@ -34,8 +36,9 @@ export default function GlobalBurnBar({ onToast }: Props) {
   const scheduledCount = jobs.filter((job) => job.started_at > progressNow).length;
   const hasJobs = jobs.length > 0;
   const parsedSamplingMs = parseSamplingMs(state.samplingMs);
-  const readyMachines = Object.values(state.machines).filter((machine) => machine.connectionStatus === "connected");
-  const startDisabled = parsedSamplingMs === undefined || readyMachines.length === 0;
+  const pageReadyCount = Object.values(state.machines).filter((machine) => machine.connectionStatus === "connected").length;
+  const readyCount = readyNodeCount ?? pageReadyCount;
+  const startDisabled = parsedSamplingMs === undefined || readyCount === 0;
 
   useEffect(() => {
     if (activeJobs.length > 0 && progressStartedAt === null) {
@@ -72,7 +75,14 @@ export default function GlobalBurnBar({ onToast }: Props) {
       onToast("Worker polling must be an integer from 10 to 1000 ms.", "error");
       return;
     }
-    const plan = buildPendingStart();
+    let machines;
+    try {
+      machines = await fetchMachines(0, 5000);
+    } catch (error) {
+      onToast(extractErrorMessage(error), "error");
+      return;
+    }
+    const plan = buildPendingStart(machines);
     if (!plan) {
       return;
     }
@@ -91,8 +101,8 @@ export default function GlobalBurnBar({ onToast }: Props) {
     await submitStart(plan);
   }
 
-  function buildPendingStart(): PendingStart | undefined {
-    const selected = Object.values(state.machines).filter((machine) => machine.connectionStatus === "connected");
+  function buildPendingStart(records: MachineApiRecord[]): PendingStart | undefined {
+    const selected = records.filter((machine) => machine.connection_status === "connected");
     if (selected.length === 0) {
       onToast("Wait for the SLURM workers to become ready.", "error");
       return undefined;
@@ -125,10 +135,10 @@ export default function GlobalBurnBar({ onToast }: Props) {
 
     const machines = selected.map((machine) => {
       const waveformName = state.usePerMachineWaveform
-        ? state.perMachineWaveformNames[machine.config.id] || state.globalWaveformName
+        ? state.perMachineWaveformNames[machine.id] || state.globalWaveformName
         : state.globalWaveformName;
       return {
-        id: machine.config.id,
+        id: machine.id,
         enabled: true,
         burn_cpu: true,
         burn_gpu: false,
@@ -145,8 +155,8 @@ export default function GlobalBurnBar({ onToast }: Props) {
       const request = machines[index];
       const start = baseStart;
       return {
-        machineId: machine.config.id,
-        machineName: machine.config.name,
+        machineId: machine.id,
+        machineName: machine.name,
         start,
         end: start + durationSeconds,
         delaySeconds: 0,
@@ -197,7 +207,7 @@ export default function GlobalBurnBar({ onToast }: Props) {
           type="button"
           className="burn-button"
           disabled={startDisabled}
-          title={startDisabled ? disabledReason(parsedSamplingMs, readyMachines.length) : undefined}
+          title={startDisabled ? disabledReason(parsedSamplingMs, readyCount, totalNodeCount) : undefined}
           onClick={() => void handleStart()}
         >
           Start Burn
@@ -273,9 +283,10 @@ export default function GlobalBurnBar({ onToast }: Props) {
 }
 
 function ScheduleSummary({ planned }: { planned: PlannedWindow[] }) {
+  const visible = planned.slice(0, 50);
   return (
     <div className="schedule-table">
-      {planned.map((item) => (
+      {visible.map((item) => (
         <div className="schedule-row" key={item.machineId}>
           <span>{item.machineName}</span>
           <span>{formatLocal(item.start)}</span>
@@ -284,14 +295,24 @@ function ScheduleSummary({ planned }: { planned: PlannedWindow[] }) {
           <span>{item.waveformName}</span>
         </div>
       ))}
+      {planned.length > visible.length && (
+        <div className="schedule-row">
+          <span>{planned.length - visible.length} more nodes</span>
+          <span />
+          <span />
+          <span />
+          <span />
+        </div>
+      )}
     </div>
   );
 }
 
 function JobSummary({ jobs }: { jobs: JobInfo[] }) {
+  const visible = jobs.slice(0, 50);
   return (
     <div className="schedule-table">
-      {jobs.map((job) => (
+      {visible.map((job) => (
         <div className="schedule-row" key={job.job_id}>
           <span>{job.machine_id}</span>
           <span>{formatLocal(job.started_at)}</span>
@@ -300,6 +321,15 @@ function JobSummary({ jobs }: { jobs: JobInfo[] }) {
           <span>{job.job_id.slice(-8)}</span>
         </div>
       ))}
+      {jobs.length > visible.length && (
+        <div className="schedule-row">
+          <span>{jobs.length - visible.length} more jobs</span>
+          <span />
+          <span />
+          <span />
+          <span />
+        </div>
+      )}
     </div>
   );
 }
@@ -346,7 +376,7 @@ function baseStartSeconds(syncMode: string, scheduledLocal: string): number | un
   return parsed / 1000;
 }
 
-function requestSyncMode(runMode: RunMode, _selected: MachineState[]): SyncMode {
+function requestSyncMode(runMode: RunMode, _selected: MachineApiRecord[]): SyncMode {
   if (runMode === "schedule") {
     return "scheduled";
   }
@@ -365,9 +395,12 @@ function parseSamplingMs(value: string): number | undefined {
   return amount;
 }
 
-function disabledReason(parsedSamplingMs: number | undefined, readyCount: number): string {
+function disabledReason(parsedSamplingMs: number | undefined, readyCount: number, totalCount: number | undefined): string {
   if (parsedSamplingMs === undefined) {
     return "Worker polling must be 10-1000 ms";
+  }
+  if (readyCount === 0 && totalCount) {
+    return `Waiting for SLURM workers. 0/${totalCount} are ready.`;
   }
   if (readyCount === 0) {
     return "No ready SLURM workers";

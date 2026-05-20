@@ -188,7 +188,7 @@ export default function App() {
         return;
       }
       inFlight = true;
-      void Promise.all([fetchMachines(), fetchBurnStatus(), fetchAllocation()])
+      void Promise.all([fetchMachines(machinePage * MACHINE_PAGE_SIZE, MACHINE_PAGE_SIZE), fetchBurnStatus(), fetchAllocation()])
         .then(([machines, jobs, currentAllocation]) => {
           dispatch({ type: "setMachines", machines });
           dispatch({ type: "setBurnJobs", jobs });
@@ -202,8 +202,9 @@ export default function App() {
     const timer = window.setInterval(() => {
       refresh();
     }, refreshMs);
+    refresh();
     return () => window.clearInterval(timer);
-  }, [refreshMs]);
+  }, [machinePage, refreshMs]);
 
   useEffect(() => {
     return openEventSocket(
@@ -214,29 +215,19 @@ export default function App() {
 
   const machines = useMemo(() => Object.values(state.machines), [state.machines]);
   const burnJobCount = Object.keys(state.burnJobs).length;
-  const machinePageCount = Math.max(1, Math.ceil(machines.length / MACHINE_PAGE_SIZE));
-  const visibleMachines = useMemo(
-    () => machines.slice(machinePage * MACHINE_PAGE_SIZE, (machinePage + 1) * MACHINE_PAGE_SIZE),
-    [machinePage, machines]
-  );
+  const totalMachines = allocation.nodes_requested ?? machines.length;
+  const connectedTotal = allocation.nodes_ready ?? machines.filter((machine) => machine.connectionStatus === "connected").length;
+  const machinePageCount = Math.max(1, Math.ceil(totalMachines / MACHINE_PAGE_SIZE));
   const loadSeriesByNode = useMemo(
     () => new Map((loadSeries?.nodes ?? []).map((node) => [node.node_id, node])),
     [loadSeries]
   );
-  const connectedCount = useMemo(
-    () => machines.filter((machine) => machine.connectionStatus === "connected").length,
-    [machines]
-  );
-  const notReadyCount = Math.max(0, machines.length - connectedCount);
-  const selectedCount = useMemo(
-    () => machines.filter((machine) => machine.burnEnabled).length,
-    [machines]
-  );
+  const notReadyCount = Math.max(0, totalMachines - connectedTotal);
   const gpuCount = useMemo(
     () => machines.reduce((total, machine) => total + (machine.hwInfo?.gpus.length ?? 0), 0),
     [machines]
   );
-  const showMachinePowerCharts = machines.length <= 48;
+  const showMachinePowerCharts = totalMachines <= 50;
   const activeJobs = Object.values(state.burnJobs).filter(
     (job) => job.started_at <= Date.now() / 1000 && Date.now() / 1000 < job.started_at + job.duration_seconds
   ).length;
@@ -351,19 +342,20 @@ export default function App() {
                 }
               />
             </div>
-            <GlobalBurnBar onToast={addToast} />
+            <GlobalBurnBar onToast={addToast} readyNodeCount={connectedTotal} totalNodeCount={totalMachines} />
           </div>
         </header>
 
         <section className="status-deck" aria-label="system status">
           <StatusTile label="Allocation" value={allocation.nodes_requested ?? 0} detail={allocation.job_id ? `job ${allocation.job_id}` : "none"} />
-          <StatusTile label="Ready Nodes" value={connectedCount} detail={`${allocation.nodes_ready ?? 0}/${allocation.nodes_requested ?? 0} workers`} />
+          <StatusTile label="Ready Nodes" value={connectedTotal} detail={`${connectedTotal}/${totalMachines} workers`} />
           <StatusTile label="GPU Inventory" value={gpuCount} detail="Shaheen CPU-only" />
           <StatusTile label="Active Jobs" value={activeJobs} detail={scheduledJobs > 0 ? `${scheduledJobs} scheduled` : "idle"} />
         </section>
 
         <ClusterPowerChart
           machines={machines}
+          nodeCount={totalMachines}
           loadSeries={loadSeries}
           loading={loadSeriesLoading}
           burnActive={burnJobCount > 0}
@@ -384,9 +376,9 @@ export default function App() {
         <section className="machine-section">
           <div className="section-heading">
             <h2>Machines</h2>
-            <span className="muted">{machines.length} allocated</span>
+            <span className="muted">{totalMachines} allocated</span>
           </div>
-          {machines.length === 0 ? (
+          {totalMachines === 0 ? (
             <div className="empty-state">
               Submit a SLURM allocation to start workers and populate node information.
             </div>
@@ -395,13 +387,13 @@ export default function App() {
               <div className="machine-toolbar">
                 <div className={`node-health ${notReadyCount === 0 ? "healthy" : "warning"}`}>
                   <strong>{notReadyCount === 0 ? "All nodes online" : `${notReadyCount} nodes not ready`}</strong>
-                  <span>{connectedCount}/{machines.length} connected workers</span>
+                  <span>{connectedTotal}/{totalMachines} connected workers</span>
                 </div>
-                {machines.length > MACHINE_PAGE_SIZE && (
+                {totalMachines > MACHINE_PAGE_SIZE && (
                   <div className="machine-pagination">
                     <span className="muted">
                       Showing {machinePage * MACHINE_PAGE_SIZE + 1}-
-                      {Math.min((machinePage + 1) * MACHINE_PAGE_SIZE, machines.length)} of {machines.length}
+                      {Math.min((machinePage + 1) * MACHINE_PAGE_SIZE, totalMachines)} of {totalMachines}
                     </span>
                     <button
                       type="button"
@@ -440,7 +432,7 @@ export default function App() {
                 )}
               </div>
               <div className="machine-grid">
-                {visibleMachines.map((machine) => (
+                {machines.map((machine) => (
                   <MachineCard
                     key={machine.config.id}
                     machine={machine}

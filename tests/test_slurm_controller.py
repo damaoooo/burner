@@ -162,6 +162,34 @@ def test_start_requires_ready_barrier_and_writes_shared_command(tmp_path):
     asyncio.run(run_test())
 
 
+def test_list_machines_paginates_and_allocation_omits_full_nodes(tmp_path):
+    async def run_test():
+        controller = SlurmController(
+            WaveformStore(custom_dir=tmp_path / "waveforms"),
+            broadcast=lambda payload: async_noop(payload),
+            control_base=tmp_path / "control",
+            repo_root=ROOT,
+            conda_env="burner",
+            slurm_client=FakeSlurmClient(),
+        )
+        await controller.submit_allocation(nodes=3, time_limit="05:00:00", poll_ms=10)
+        session_dir = Path((await controller.allocation_status())["session_dir"])
+        write_node(session_dir, "nid001")
+        write_node(session_dir, "nid002")
+        write_node(session_dir, "nid003")
+        controller._nodes_cache = None
+
+        page = await controller.list_machines(offset=1, limit=1)
+        status = await controller.allocation_status()
+
+        assert [node["id"] for node in page] == ["nid002"]
+        assert status["nodes_requested"] == 3
+        assert status["nodes_ready"] == 3
+        assert "nodes" not in status
+
+    asyncio.run(run_test())
+
+
 def test_start_fails_until_all_workers_are_ready(tmp_path):
     async def run_test():
         controller = SlurmController(

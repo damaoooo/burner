@@ -27,8 +27,10 @@ function toWaveform(raw: { name: string; source: "fixtures" | "custom"; points: 
   };
 }
 
-export async function fetchMachines(): Promise<MachineApiRecord[]> {
-  const { data } = await http.get<MachineApiRecord[]>("/machines");
+export async function fetchMachines(offset = 0, limit = 50): Promise<MachineApiRecord[]> {
+  const { data } = await http.get<MachineApiRecord[]>("/machines", {
+    params: { offset, limit }
+  });
   return data;
 }
 

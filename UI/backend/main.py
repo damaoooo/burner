@@ -145,8 +145,8 @@ async def load_series(max_points: int = 1200, include_nodes: bool = False):
 
 
 @app.get("/api/machines")
-async def list_machines():
-    return await slurm_controller.list_machines()
+async def list_machines(offset: int = 0, limit: int = 50):
+    return await slurm_controller.list_machines(offset=offset, limit=limit)
 
 
 @app.post("/api/machines/{machine_id}/connect")
@@ -167,10 +167,9 @@ async def disconnect_machine(machine_id: str):
 
 @app.get("/api/machines/{machine_id}/hwinfo")
 async def machine_hwinfo(machine_id: str):
-    machines = await slurm_controller.list_machines()
-    for machine in machines:
-        if machine["id"] == machine_id:
-            return machine["hw_info"]
+    machine = await slurm_controller.get_machine(machine_id)
+    if machine is not None:
+        return machine["hw_info"]
     raise HTTPException(status_code=404, detail=f"unknown SLURM node: {machine_id}")
 
 
@@ -276,16 +275,6 @@ async def websocket_endpoint(websocket: WebSocket):
 
 async def _send_snapshot(websocket: WebSocket) -> None:
     await websocket.send_json({"event": "allocation_changed", **(await slurm_controller.allocation_status())})
-    for machine in await slurm_controller.list_machines():
-        await websocket.send_json(
-            {
-                "event": "machine_status",
-                "id": machine["id"],
-                "status": machine["connection_status"],
-                "message": machine.get("error_message"),
-            }
-        )
-        await websocket.send_json({"event": "hw_info", "id": machine["id"], **machine["hw_info"]})
     for job in slurm_controller.status():
         await websocket.send_json(
             {

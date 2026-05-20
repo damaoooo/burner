@@ -38,6 +38,7 @@ DEFAULT_CONTROL_BASE = Path("/scratch/zhoul0e/burner-slurm-control")
 DEFAULT_CONDA_ENV = "burner"
 DEFAULT_START_LEAD_SECONDS = 2.0
 WORKER_STALE_SECONDS = 30.0
+NODE_CACHE_SECONDS = 1.0
 LOAD_EXPORT_COLUMNS = [
     "session_id",
     "job_id",
@@ -255,6 +256,7 @@ class SlurmController:
         self._slurm = slurm_client or build_slurm_client(runner)
         self._jobs: dict[str, SlurmBurnJob] = {}
         self._lock = asyncio.Lock()
+        self._nodes_cache: tuple[str, float, list[dict[str, object]]] | None = None
 
     async def submit_allocation(
         self,
@@ -338,7 +340,7 @@ class SlurmController:
             }
 
         slurm_state = await self._slurm_state(session.job_id)
-        nodes = self._read_nodes(session)
+        nodes = self._read_nodes_cached(session)
         ready_count = len(
             [
                 node
@@ -359,14 +361,27 @@ class SlurmController:
             "sample_ms": session.sample_ms,
             "time_limit": session.time_limit,
             "created_at": session.created_at,
-            "nodes": nodes,
         }
 
-    async def list_machines(self) -> list[dict[str, object]]:
+    async def list_machines(self, offset: int = 0, limit: int | None = 50) -> list[dict[str, object]]:
         session = self._load_current_session()
         if session is None:
             return []
-        return self._read_nodes(session)
+        nodes = self._read_nodes_cached(session)
+        offset = max(0, int(offset))
+        if limit is None:
+            return nodes[offset:]
+        limit = max(1, min(int(limit), 10000))
+        return nodes[offset : offset + limit]
+
+    async def get_machine(self, machine_id: str) -> dict[str, object] | None:
+        session = self._load_current_session()
+        if session is None:
+            return None
+        for node in self._read_nodes_cached(session):
+            if node.get("id") == machine_id:
+                return node
+        return None
 
     async def start_burn(
         self,
@@ -671,6 +686,16 @@ class SlurmController:
                     "job": job,
                 }
             )
+        return nodes
+
+    def _read_nodes_cached(self, session: SlurmSession) -> list[dict[str, object]]:
+        now = time.monotonic()
+        if self._nodes_cache is not None:
+            session_id, cached_at, nodes = self._nodes_cache
+            if session_id == session.session_id and now - cached_at <= NODE_CACHE_SECONDS:
+                return nodes
+        nodes = self._read_nodes(session)
+        self._nodes_cache = (session.session_id, now, nodes)
         return nodes
 
     def _read_load_samples(self, session: SlurmSession) -> dict[str, list[LoadSample]]:
