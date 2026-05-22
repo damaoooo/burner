@@ -14,6 +14,16 @@ INTERVAL_CFLAGS="-DBURNER_CONTROL_INTERVAL_MS=${CONTROL_INTERVAL_MS}"
 
 cd "${LOOKBUSY_DIR}"
 
+# config.guess / config.sub are tracked in the repo; copy from system automake as fallback
+for aux_file in config.guess config.sub; do
+  if [[ ! -f "${aux_file}" ]]; then
+    sys_file="$(find /usr/share/automake* -name "${aux_file}" 2>/dev/null | head -1)"
+    if [[ -n "${sys_file}" ]]; then
+      cp "${sys_file}" "${aux_file}"
+    fi
+  fi
+done
+
 if ! bash ./configure; then
   echo "lookbusy configure failed." >&2
   exit 1

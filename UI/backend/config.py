@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 
 UI_ROOT = Path(__file__).resolve().parents[1]
@@ -26,7 +26,7 @@ class MachineConfig:
     workdir: str
     cpu_tdp: float
     gpu_tdp: float
-    conda_env: str
+    conda_env: Optional[str]
 
     @property
     def expanded_identity_file(self) -> str:
@@ -100,7 +100,6 @@ def _parse_machine(item: Any, index: int) -> MachineConfig:
         "workdir",
         "cpu_tdp",
         "gpu_tdp",
-        "conda_env",
     ]
     missing = [key for key in required if key not in item]
     if missing:
@@ -117,7 +116,7 @@ def _parse_machine(item: Any, index: int) -> MachineConfig:
         workdir=_require_string(item, "workdir", index),
         cpu_tdp=float(item["cpu_tdp"]),
         gpu_tdp=float(item["gpu_tdp"]),
-        conda_env=_require_string(item, "conda_env", index),
+        conda_env=item.get("conda_env") or None,
     )
 
 

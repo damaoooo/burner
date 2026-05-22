@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import shlex
+from typing import Optional
 
 
-def conda_run_command(conda_env: str, inner_command: str) -> str:
-    env = shlex.quote(conda_env)
+def conda_run_command(conda_env: Optional[str], inner_command: str) -> str:
     inner = shlex.quote(inner_command)
+    if not conda_env:
+        return f"bash -lc {inner}"
+    env = shlex.quote(conda_env)
     script = f"""
 if command -v conda >/dev/null 2>&1; then
   conda run -n {env} bash -lc {inner}
@@ -28,9 +31,11 @@ fi
     return f"bash -lc {shlex.quote(script)}"
 
 
-def conda_env_path_command(conda_env: str, inner_command: str) -> str:
-    env = shlex.quote(conda_env)
+def conda_env_path_command(conda_env: Optional[str], inner_command: str) -> str:
     inner = shlex.quote(inner_command)
+    if not conda_env:
+        return f"bash -lc {inner}"
+    env = shlex.quote(conda_env)
     script = f"""
 CONDA_ENV_NAME={env}
 for base in "$HOME/miniconda3" "$HOME/anaconda3" "$HOME/miniforge3" "$HOME/mambaforge" "/opt/conda"; do

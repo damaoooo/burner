@@ -39,7 +39,7 @@ def test_update_controller_resets_submodules_before_pull_and_build():
 class FakeMachine:
     id: str = "node-1"
     workdir: str = "/remote/burner"
-    conda_env: str = "ReLL"
+    conda_env: str = None
 
 
 class FakeConfig:

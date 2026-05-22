@@ -83,7 +83,7 @@ def test_sampling_controller_runs_reset_pull_scp_then_builds():
 class FakeMachine:
     id: str = "node-1"
     workdir: str = "/remote/burner"
-    conda_env: str = "ReLL"
+    conda_env: str = None
 
 
 class FakeConfig:
