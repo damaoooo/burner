@@ -104,14 +104,20 @@ class LookbusyCpuBackend(BurnBackend):
             "--cpu-util-file",
             str(self._control_file),
         ]
-        if self.ncpus is not None:
-            command.extend(["-n", str(self.ncpus)])
+        ncpus = self.ncpus if self.ncpus is not None else _default_cpu_count()
+        if ncpus is not None:
+            command.extend(["-n", str(ncpus)])
         self._process = subprocess.Popen(
             command,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             preexec_fn=os.setsid,
         )
+
+
+def _default_cpu_count() -> int | None:
+    count = os.cpu_count()
+    return count if count is not None and count > 0 else None
 
 
 class DutyCycleGpuBackend(BurnBackend):

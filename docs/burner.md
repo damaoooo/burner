@@ -46,6 +46,7 @@ The curve file has no header and exactly two columns:
 ## Backends
 
 - CPU uses the patched `third_party/lookbusy/lookbusy`.
+- CPU burn passes the remote machine's logical CPU count to lookbusy by default, so multi-socket machines burn all online logical CPUs.
 - GPU uses patched `third_party/gpu-burn/gpu_burn` with `--burn-util-file` so the CUDA work loop reads the live target utilization and throttles kernel submission internally.
 - GPU burn targets all detected CUDA GPUs by default. `burner` does not pass `-i`, so gpu-burn forks one worker per GPU and all workers read the same utilization control file.
 - The patched CPU and GPU backends use `100ms` control checks for externally supplied utilization targets by default.

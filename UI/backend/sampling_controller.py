@@ -20,6 +20,7 @@ SOURCE_FILES: tuple[str, ...] = (
     "scripts/build_gpu_burn.sh",
     "third_party/lookbusy/lb.c",
     "third_party/gpu-burn/gpu_burn-drv.cpp",
+    "warpper/burner_backends.py",
     "warpper/burner_cli.py",
 )
 

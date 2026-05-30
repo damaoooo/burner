@@ -227,3 +227,29 @@ def test_cpu_backend_writes_initial_intensity_before_start(tmp_path, monkeypatch
     backend.stop()
 
     assert calls["initial"] == "50.000000\n"
+
+
+def test_cpu_backend_defaults_to_all_logical_cpus(tmp_path, monkeypatch):
+    binary = tmp_path / "lookbusy"
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    calls = {}
+
+    class FakeProcess:
+        pid = 123
+
+        def poll(self):
+            return None
+
+    def fake_popen(command, **kwargs):
+        calls["command"] = command
+        return FakeProcess()
+
+    monkeypatch.setattr(burner_backends.os, "cpu_count", lambda: 64)
+    monkeypatch.setattr(burner_backends.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(burner_backends, "_terminate_process_group", lambda process, timeout=5: None)
+
+    backend = burner_backends.LookbusyCpuBackend(binary=binary)
+    backend.prepare()
+    backend.stop()
+
+    assert calls["command"][calls["command"].index("-n") + 1] == "64"
