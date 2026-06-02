@@ -1,6 +1,7 @@
 import axios from "axios";
 import type {
   BurnStartRequest,
+  BurnStartAllRequest,
   JobInfo,
   LoadSeries,
   MachineApiRecord,
@@ -73,6 +74,11 @@ export async function saveWaveform(name: string, points: Point[]): Promise<Wavef
 
 export async function startBurn(payload: BurnStartRequest): Promise<JobInfo[]> {
   const { data } = await http.post<JobInfo[]>("/burn/start", payload);
+  return data;
+}
+
+export async function startBurnAll(payload: BurnStartAllRequest): Promise<JobInfo[]> {
+  const { data } = await http.post<JobInfo[]>("/burn/start-all", payload);
   return data;
 }
 

@@ -13,6 +13,8 @@ from burn_controller import MachineBurnRequest  # noqa: E402
 from burn_controller import BurnError  # noqa: E402
 from slurm_controller import (  # noqa: E402
     SlurmController,
+    CLUSTER_BURN_MACHINE_ID,
+    compact_burn_job_dicts,
     parse_sbatch_job_id,
     render_sbatch_script,
     validate_poll_ms,
@@ -161,6 +163,68 @@ def test_start_requires_ready_barrier_and_writes_shared_command(tmp_path):
         assert len(jobs) == 2
 
     asyncio.run(run_test())
+
+
+def test_start_uses_online_node_files_for_ready_barrier(tmp_path, monkeypatch):
+    async def run_test():
+        controller = SlurmController(
+            WaveformStore(custom_dir=tmp_path / "waveforms"),
+            broadcast=lambda payload: async_noop(payload),
+            control_base=tmp_path / "control",
+            repo_root=ROOT,
+            conda_env="burner",
+            slurm_client=FakeSlurmClient(),
+        )
+        await controller.submit_allocation(nodes=2, time_limit="05:00:00", poll_ms=10)
+        session_dir = Path((await controller.allocation_status())["session_dir"])
+        write_node(session_dir, "nid001")
+        write_node(session_dir, "nid002")
+        monkeypatch.setattr(
+            controller,
+            "_read_nodes",
+            lambda session: (_ for _ in ()).throw(AssertionError("start read full node JSON")),
+        )
+
+        jobs = await controller.start_burn(
+            "immediate",
+            "10s",
+            "1s",
+            [
+                MachineBurnRequest("nid001", True, True, False, 0.0, "sine"),
+                MachineBurnRequest("nid002", True, True, False, 0.0, "sine"),
+            ],
+            tick_seconds=0.01,
+        )
+
+        assert {job.machine_id for job in jobs} == {"nid001", "nid002"}
+
+    asyncio.run(run_test())
+
+
+def test_compact_burn_jobs_collapses_large_allocations():
+    jobs = [
+        {
+            "job_id": f"job-{index}",
+            "machine_id": f"nid{index:04d}",
+            "pid": 0,
+            "started_at": 1000.0,
+            "duration_seconds": 10.0,
+            "elapsed_seconds": 0.0,
+            "burn_cpu": True,
+            "burn_gpu": False,
+            "delay_seconds": 0.0,
+            "waveform_name": "full",
+            "sync_mode": "immediate",
+        }
+        for index in range(51)
+    ]
+
+    compact = compact_burn_job_dicts(jobs)
+
+    assert len(compact) == 1
+    assert compact[0]["machine_id"] == CLUSTER_BURN_MACHINE_ID
+    assert compact[0]["node_count"] == 51
+    assert compact[0]["duration_seconds"] == 10.0
 
 
 def test_list_machines_paginates_and_allocation_omits_full_nodes(tmp_path):

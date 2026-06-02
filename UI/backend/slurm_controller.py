@@ -39,6 +39,9 @@ DEFAULT_CONDA_ENV = "burner"
 DEFAULT_START_LEAD_SECONDS = 2.0
 WORKER_STALE_SECONDS = 30.0
 NODE_CACHE_SECONDS = 5.0
+MAX_DETAILED_BURN_JOBS = 50
+CLUSTER_BURN_MACHINE_ID = "__shaheen_cluster__"
+CLUSTER_BURN_JOB_ID = "shaheen-cluster-burn"
 TERMINAL_SLURM_STATES = {"COMPLETED", "CANCELLED", "FAILED", "TIMEOUT", "BOOT_FAIL", "UNKNOWN"}
 LOAD_EXPORT_COLUMNS = [
     "session_id",
@@ -402,16 +405,16 @@ class SlurmController:
         parse_tick(tick_seconds)
 
         session = self._require_session()
-        nodes = self._ready_nodes(session)
-        if len(nodes) != session.nodes_requested:
+        ready_ids = self.ready_node_ids(session)
+        if len(ready_ids) != session.nodes_requested:
             raise BurnError(
-                f"waiting for all workers: {len(nodes)}/{session.nodes_requested} ready"
+                f"waiting for all workers: {len(ready_ids)}/{session.nodes_requested} ready"
             )
 
         enabled = [machine for machine in machines if machine.enabled]
-        ready_ids = {str(node["id"]) for node in nodes}
+        ready_id_set = set(ready_ids)
         enabled_ids = {machine.id for machine in enabled}
-        if enabled_ids != ready_ids:
+        if enabled_ids != ready_id_set:
             raise BurnError("all ready SLURM nodes must be enabled for synchronized burn")
         if any(not machine.burn_cpu for machine in enabled):
             raise BurnError("Shaheen SLURM mode requires CPU burn on every node")
@@ -438,14 +441,14 @@ class SlurmController:
 
         plans = [
             SlurmBurnJob(
-                job_id=f"{session.session_id}-{node['id']}-{uuid.uuid4().hex[:8]}",
-                machine_id=str(node["id"]),
+                job_id=f"{session.session_id}-{node_id}-{uuid.uuid4().hex[:8]}",
+                machine_id=node_id,
                 started_at=start_time.timestamp(),
                 duration_seconds=duration_seconds,
                 waveform_name=waveform_name,
                 sync_mode=sync_mode,
             )
-            for node in nodes
+            for node_id in ready_ids
         ]
         self._check_overlaps(plans)
         sequence = self._next_command_sequence(session)
@@ -466,7 +469,7 @@ class SlurmController:
 
         for job in plans:
             self._jobs[job.job_id] = job
-            await self._broadcast({"event": "burn_started", "id": job.machine_id, **job.to_dict()})
+        await self._broadcast_burn_started(plans)
         return plans
 
     async def stop_burn(
@@ -486,17 +489,12 @@ class SlurmController:
                     "created_at": iso_z(datetime.now(UTC)),
                 },
             )
+        stopped_jobs = []
         for job_id in ids:
             job = self._jobs.pop(job_id, None)
             if job is not None:
-                await self._broadcast(
-                    {
-                        "event": "burn_stopped",
-                        "job_id": job.job_id,
-                        "id": job.machine_id,
-                        "exit_code": 0,
-                    }
-                )
+                stopped_jobs.append(job)
+        await self._broadcast_burn_stopped(stopped_jobs)
 
     async def release_allocation(self) -> dict[str, object]:
         session = self._load_current_session()
@@ -596,7 +594,7 @@ class SlurmController:
             },
         }
 
-    def status(self) -> list[dict[str, object]]:
+    def status(self, compact: bool = True) -> list[dict[str, object]]:
         now = time.time()
         expired = [
             job_id
@@ -605,19 +603,42 @@ class SlurmController:
         ]
         for job_id in expired:
             self._jobs.pop(job_id, None)
-        return [job.to_dict() for job in self._jobs.values()]
+        jobs = [job.to_dict() for job in self._jobs.values()]
+        return compact_burn_job_dicts(jobs) if compact else jobs
 
     def has_jobs(self) -> bool:
         self.status()
         return bool(self._jobs)
 
-    def _ready_nodes(self, session: SlurmSession) -> list[dict[str, object]]:
-        return [
-            node
-            for node in self._read_nodes(session)
-            if node.get("connection_status") == "connected"
-            and node.get("worker_status") == "ready"
-        ]
+    def ready_node_ids(self, session: SlurmSession | None = None) -> list[str]:
+        session = session or self._require_session()
+        node_ids = []
+        now = time.time()
+        for path in sorted((session.session_dir / "nodes").glob("*.json")):
+            try:
+                if now - path.stat().st_mtime > WORKER_STALE_SECONDS:
+                    continue
+            except OSError:
+                continue
+            node_ids.append(path.stem)
+        return node_ids
+
+    async def _broadcast_burn_started(self, jobs: list[SlurmBurnJob]) -> None:
+        payloads = compact_burn_job_dicts([job.to_dict() for job in jobs])
+        for payload in payloads:
+            await self._broadcast({"event": "burn_started", "id": payload["machine_id"], **payload})
+
+    async def _broadcast_burn_stopped(self, jobs: list[SlurmBurnJob]) -> None:
+        payloads = compact_burn_job_dicts([job.to_dict() for job in jobs])
+        for payload in payloads:
+            await self._broadcast(
+                {
+                    "event": "burn_stopped",
+                    "job_id": payload["job_id"],
+                    "id": payload["machine_id"],
+                    "exit_code": 0,
+                }
+            )
 
     def _read_nodes(self, session: SlurmSession) -> list[dict[str, object]]:
         nodes = []
@@ -848,6 +869,33 @@ def validate_node_count(value: int) -> int:
     if not isinstance(value, int) or value < 1:
         raise SlurmError("nodes must be a positive integer")
     return value
+
+
+def compact_burn_job_dicts(jobs: list[dict[str, object]]) -> list[dict[str, object]]:
+    if len(jobs) <= MAX_DETAILED_BURN_JOBS:
+        return jobs
+    starts = [_float_or_zero(job.get("started_at")) for job in jobs]
+    durations = [_float_or_zero(job.get("duration_seconds")) for job in jobs]
+    start_at = min(starts) if starts else time.time()
+    end_at = max((start + duration for start, duration in zip(starts, durations, strict=False)), default=start_at)
+    first = jobs[0]
+    elapsed = max(0.0, time.time() - start_at)
+    return [
+        {
+            "job_id": CLUSTER_BURN_JOB_ID,
+            "machine_id": CLUSTER_BURN_MACHINE_ID,
+            "pid": 0,
+            "started_at": start_at,
+            "duration_seconds": max(0.0, end_at - start_at),
+            "elapsed_seconds": elapsed,
+            "burn_cpu": True,
+            "burn_gpu": False,
+            "delay_seconds": 0.0,
+            "waveform_name": first.get("waveform_name"),
+            "sync_mode": first.get("sync_mode"),
+            "node_count": len(jobs),
+        }
+    ]
 
 
 def validate_poll_ms(value: int) -> int:

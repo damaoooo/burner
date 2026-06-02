@@ -37,6 +37,7 @@ export default function App() {
   const [machinePage, setMachinePage] = useState(0);
   const previousBurnJobCount = useRef(0);
   const loadSeriesRequest = useRef(0);
+  const allocationReady = isAllocationReady(allocation);
 
   const addToast = useCallback((message: string, kind: Toast["kind"] = "info") => {
     const id = Date.now() + Math.random();
@@ -93,6 +94,7 @@ export default function App() {
         job: {
           job_id: event.job_id ?? event.id,
           machine_id: event.id,
+          node_count: event.node_count,
           pid: event.pid,
           started_at: event.started_at ?? Date.now() / 1000,
           duration_seconds: event.duration_seconds,
@@ -183,28 +185,51 @@ export default function App() {
 
   useEffect(() => {
     let inFlight = false;
+    let cancelled = false;
     const refresh = () => {
       if (inFlight) {
         return;
       }
       inFlight = true;
-      void Promise.all([fetchMachines(machinePage * MACHINE_PAGE_SIZE, MACHINE_PAGE_SIZE), fetchBurnStatus(), fetchAllocation()])
+      const allocationRequest = allocationReady ? Promise.resolve<SlurmAllocation | null>(null) : fetchAllocation();
+      const burnRequest = allocationReady ? Promise.resolve(null) : fetchBurnStatus();
+      void Promise.all([
+        fetchMachines(machinePage * MACHINE_PAGE_SIZE, MACHINE_PAGE_SIZE),
+        burnRequest,
+        allocationRequest
+      ])
         .then(([machines, jobs, currentAllocation]) => {
-          dispatch({ type: "setMachines", machines: currentAllocation.active ? machines : [] });
-          dispatch({ type: "setBurnJobs", jobs: currentAllocation.active ? jobs : [] });
-          setAllocation(currentAllocation);
+          if (cancelled) {
+            return;
+          }
+          const nextAllocation = currentAllocation ?? allocation;
+          dispatch({ type: "setMachines", machines: nextAllocation.active ? machines : [] });
+          if (jobs) {
+            dispatch({ type: "setBurnJobs", jobs: nextAllocation.active ? jobs : [] });
+          }
+          if (currentAllocation) {
+            setAllocation(currentAllocation);
+          }
         })
         .catch(() => undefined)
         .finally(() => {
           inFlight = false;
         });
     };
+    refresh();
+    if (!allocation.active || allocationReady) {
+      return () => {
+        cancelled = true;
+      };
+    }
     const timer = window.setInterval(() => {
       refresh();
     }, refreshMs);
-    refresh();
-    return () => window.clearInterval(timer);
-  }, [machinePage, refreshMs]);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [allocation.active, allocation.session_id, allocationReady, machinePage, refreshMs]);
 
   useEffect(() => {
     return openEventSocket(
@@ -228,14 +253,34 @@ export default function App() {
     [machines]
   );
   const showMachinePowerCharts = totalMachines <= 50;
-  const activeJobs = Object.values(state.burnJobs).filter(
-    (job) => job.started_at <= Date.now() / 1000 && Date.now() / 1000 < job.started_at + job.duration_seconds
-  ).length;
-  const scheduledJobs = Object.values(state.burnJobs).filter((job) => job.started_at > Date.now() / 1000).length;
+  const activeJobNodes = Object.values(state.burnJobs)
+    .filter((job) => job.started_at <= Date.now() / 1000 && Date.now() / 1000 < job.started_at + job.duration_seconds)
+    .reduce((total, job) => total + (job.node_count ?? 1), 0);
+  const scheduledJobNodes = Object.values(state.burnJobs)
+    .filter((job) => job.started_at > Date.now() / 1000)
+    .reduce((total, job) => total + (job.node_count ?? 1), 0);
 
   useEffect(() => {
     setMachinePage((current) => Math.min(current, machinePageCount - 1));
   }, [machinePageCount]);
+
+  useEffect(() => {
+    const jobs = Object.values(state.burnJobs);
+    if (jobs.length === 0) {
+      return undefined;
+    }
+    const now = Date.now() / 1000;
+    const nextEnd = Math.min(...jobs.map((job) => job.started_at + job.duration_seconds).filter((end) => end > now));
+    if (!Number.isFinite(nextEnd)) {
+      dispatch({ type: "pruneBurnJobs", now });
+      return undefined;
+    }
+    const timer = window.setTimeout(
+      () => dispatch({ type: "pruneBurnJobs", now: Date.now() / 1000 }),
+      Math.max(0, (nextEnd - now) * 1000 + 250)
+    );
+    return () => window.clearTimeout(timer);
+  }, [state.burnJobs]);
 
   useEffect(() => {
     if (burnJobCount > 0) {
@@ -350,7 +395,7 @@ export default function App() {
           <StatusTile label="Allocation" value={allocation.nodes_requested ?? 0} detail={allocation.job_id ? `job ${allocation.job_id}` : "none"} />
           <StatusTile label="Ready Nodes" value={connectedTotal} detail={`${connectedTotal}/${totalMachines} workers`} />
           <StatusTile label="GPU Inventory" value={gpuCount} detail="Shaheen CPU-only" />
-          <StatusTile label="Active Jobs" value={activeJobs} detail={scheduledJobs > 0 ? `${scheduledJobs} scheduled` : "idle"} />
+          <StatusTile label="Active Jobs" value={activeJobNodes} detail={scheduledJobNodes > 0 ? `${scheduledJobNodes} scheduled` : "idle"} />
         </section>
 
         <ClusterPowerChart
@@ -466,6 +511,12 @@ function StatusTile({ label, value, detail }: { label: string; value: number; de
       <span className="status-detail">{detail}</span>
     </div>
   );
+}
+
+function isAllocationReady(allocation: SlurmAllocation): boolean {
+  const requested = allocation.nodes_requested ?? 0;
+  const ready = allocation.nodes_ready ?? 0;
+  return Boolean(allocation.active && requested > 0 && ready >= requested);
 }
 
 function RunModeSwitch({

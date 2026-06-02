@@ -46,6 +46,7 @@ export type Action =
   | { type: "setBurnJobs"; jobs: JobInfo[] }
   | { type: "burnStarted"; job: JobInfo }
   | { type: "burnStopped"; jobId?: string; machineId?: string }
+  | { type: "pruneBurnJobs"; now: number }
   | { type: "clearUpdateLog"; machineId: string }
   | { type: "appendUpdateLog"; machineId: string; line: string }
   | { type: "setUpdateDone"; machineId: string; exitCode: number }
@@ -357,6 +358,15 @@ export function reducer(state: AppState, action: Action): AppState {
       }
       return { ...state, burnJobs: nextJobs };
     }
+    case "pruneBurnJobs":
+      return {
+        ...state,
+        burnJobs: Object.fromEntries(
+          Object.entries(state.burnJobs).filter(
+            ([, job]) => action.now < job.started_at + job.duration_seconds
+          )
+        )
+      };
     case "clearUpdateLog":
       return {
         ...state,

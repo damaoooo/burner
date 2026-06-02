@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from burn_controller import BurnError, BurnOverlapError, MachineBurnRequest
 from config import UI_ROOT
-from slurm_controller import SlurmConflictError, SlurmController, SlurmError
+from slurm_controller import SlurmConflictError, SlurmController, SlurmError, compact_burn_job_dicts
 from waveform_store import WaveformError, WaveformExistsError, WaveformStore
 
 
@@ -43,6 +43,15 @@ class BurnStartPayload(BaseModel):
     period: str
     tick_seconds: float = 0.1
     machines: list[BurnMachinePayload]
+
+
+class BurnStartAllPayload(BaseModel):
+    sync_mode: Literal["immediate", "scheduled"] = "immediate"
+    start_time_utc: str | None = None
+    duration: str
+    period: str
+    tick_seconds: float = 0.1
+    waveform_name: str
 
 
 class BurnStopPayload(BaseModel):
@@ -227,7 +236,39 @@ async def start_burn(payload: BurnStartPayload):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    return [job.to_dict() for job in jobs]
+    return compact_burn_job_dicts([job.to_dict() for job in jobs])
+
+
+@app.post("/api/burn/start-all")
+async def start_burn_all(payload: BurnStartAllPayload):
+    try:
+        node_ids = slurm_controller.ready_node_ids()
+        machines = [
+            MachineBurnRequest(
+                id=node_id,
+                enabled=True,
+                burn_cpu=True,
+                burn_gpu=False,
+                delay_seconds=0.0,
+                waveform_name=payload.waveform_name,
+            )
+            for node_id in node_ids
+        ]
+        jobs = await slurm_controller.start_burn(
+            payload.sync_mode,
+            payload.duration,
+            payload.period,
+            machines,
+            payload.start_time_utc,
+            payload.tick_seconds,
+        )
+    except BurnOverlapError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except BurnError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return compact_burn_job_dicts([job.to_dict() for job in jobs])
 
 
 @app.post("/api/burn/stop")

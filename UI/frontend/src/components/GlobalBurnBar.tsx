@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { extractErrorMessage, fetchMachines, startBurn, stopBurn } from "../api/client";
+import { extractErrorMessage, fetchMachines, startBurn, startBurnAll, stopBurn } from "../api/client";
 import { useAppState } from "../state/AppState";
-import type { BurnStartRequest, JobInfo, MachineApiRecord, RunMode, SyncMode } from "../types";
+import type { BurnStartAllRequest, BurnStartRequest, JobInfo, MachineApiRecord, RunMode, SyncMode } from "../types";
 
 interface Props {
   onToast: (message: string, kind?: "info" | "error" | "success") => void;
@@ -19,9 +19,12 @@ interface PlannedWindow {
 }
 
 interface PendingStart {
-  payload: BurnStartRequest;
+  payload?: BurnStartRequest;
+  allPayload?: BurnStartAllRequest;
   planned: PlannedWindow[];
 }
+
+const CLUSTER_START_THRESHOLD = 50;
 
 export default function GlobalBurnBar({ onToast, readyNodeCount, totalNodeCount }: Props) {
   const { state, dispatch } = useAppState();
@@ -33,7 +36,9 @@ export default function GlobalBurnBar({ onToast, readyNodeCount, totalNodeCount 
 
   const jobs = useMemo(() => Object.values(state.burnJobs), [state.burnJobs]);
   const activeJobs = jobs.filter((job) => isActive(job, progressNow));
-  const scheduledCount = jobs.filter((job) => job.started_at > progressNow).length;
+  const scheduledCount = jobs
+    .filter((job) => job.started_at > progressNow)
+    .reduce((total, job) => total + (job.node_count ?? 1), 0);
   const hasJobs = jobs.length > 0;
   const parsedSamplingMs = parseSamplingMs(state.samplingMs);
   const pageReadyCount = Object.values(state.machines).filter((machine) => machine.connectionStatus === "connected").length;
@@ -75,14 +80,8 @@ export default function GlobalBurnBar({ onToast, readyNodeCount, totalNodeCount 
       onToast("Worker polling must be an integer from 10 to 1000 ms.", "error");
       return;
     }
-    let machines;
-    try {
-      machines = await fetchMachines(0, 5000);
-    } catch (error) {
-      onToast(extractErrorMessage(error), "error");
-      return;
-    }
-    const plan = buildPendingStart(machines);
+    const clusterStart = shouldUseClusterStart(readyCount, totalNodeCount);
+    const plan = clusterStart ? buildClusterPendingStart() : await buildDetailedPendingStart();
     if (!plan) {
       return;
     }
@@ -93,12 +92,23 @@ export default function GlobalBurnBar({ onToast, readyNodeCount, totalNodeCount 
       return;
     }
 
-    if (plan.payload.sync_mode === "scheduled") {
+    if ((plan.allPayload ?? plan.payload)?.sync_mode === "scheduled") {
       setPendingStart(plan);
       return;
     }
 
     await submitStart(plan);
+  }
+
+  async function buildDetailedPendingStart(): Promise<PendingStart | undefined> {
+    let machines;
+    try {
+      machines = await fetchMachines(0, 5000);
+    } catch (error) {
+      onToast(extractErrorMessage(error), "error");
+      return undefined;
+    }
+    return buildPendingStart(machines);
   }
 
   function buildPendingStart(records: MachineApiRecord[]): PendingStart | undefined {
@@ -177,11 +187,69 @@ export default function GlobalBurnBar({ onToast, readyNodeCount, totalNodeCount 
     };
   }
 
+  function buildClusterPendingStart(): PendingStart | undefined {
+    if (!totalNodeCount || readyCount < totalNodeCount) {
+      onToast(`Wait for all SLURM workers. ${readyCount}/${totalNodeCount ?? 0} are ready.`, "error");
+      return undefined;
+    }
+
+    const durationSeconds = parseDurationSeconds(state.duration);
+    if (durationSeconds === undefined) {
+      onToast("Duration must be a positive whole number of seconds.", "error");
+      return undefined;
+    }
+
+    const period = formatPeriodSeconds(state.period);
+    if (!period) {
+      onToast("Period must be a positive number of seconds.", "error");
+      return undefined;
+    }
+
+    if (!state.globalWaveformName) {
+      onToast("Select or save a waveform first.", "error");
+      return undefined;
+    }
+
+    const syncMode = state.runMode === "schedule" ? "scheduled" : "immediate";
+    const startTimeUtc = syncMode === "scheduled" ? toUtcIso(state.scheduledStartLocal) : undefined;
+    if (syncMode === "scheduled" && !startTimeUtc) {
+      onToast("Choose a scheduled start time in the future.", "error");
+      return undefined;
+    }
+
+    const baseStart = baseStartSeconds(syncMode, state.scheduledStartLocal);
+    if (baseStart === undefined) {
+      onToast("Choose a scheduled start time in the future.", "error");
+      return undefined;
+    }
+
+    return {
+      allPayload: {
+        sync_mode: syncMode,
+        start_time_utc: startTimeUtc,
+        duration: `${durationSeconds}s`,
+        period,
+        tick_seconds: (parsedSamplingMs ?? 100) / 1000,
+        waveform_name: state.globalWaveformName
+      },
+      planned: [
+        {
+          machineId: "__shaheen_cluster__",
+          machineName: `${totalNodeCount} nodes`,
+          start: baseStart,
+          end: baseStart + durationSeconds,
+          delaySeconds: 0,
+          waveformName: state.globalWaveformName
+        }
+      ]
+    };
+  }
+
   async function submitStart(plan: PendingStart) {
     try {
-      const started = await startBurn(plan.payload);
+      const started = plan.allPayload ? await startBurnAll(plan.allPayload) : await startBurn(plan.payload as BurnStartRequest);
       started.forEach((job: JobInfo) => dispatch({ type: "burnStarted", job }));
-      if (plan.payload.sync_mode === "scheduled") {
+      if ((plan.allPayload ?? plan.payload)?.sync_mode === "scheduled") {
         setScheduledResult(started);
       } else {
         onToast("Burn started.", "success");
@@ -195,6 +263,7 @@ export default function GlobalBurnBar({ onToast, readyNodeCount, totalNodeCount 
   async function handleStop() {
     try {
       await stopBurn("all");
+      dispatch({ type: "setBurnJobs", jobs: [] });
     } catch (error) {
       onToast(extractErrorMessage(error), "error");
     }
@@ -314,7 +383,7 @@ function JobSummary({ jobs }: { jobs: JobInfo[] }) {
     <div className="schedule-table">
       {visible.map((job) => (
         <div className="schedule-row" key={job.job_id}>
-          <span>{job.machine_id}</span>
+          <span>{job.node_count ? `${job.node_count} nodes` : job.machine_id}</span>
           <span>{formatLocal(job.started_at)}</span>
           <span>{formatLocal(job.started_at + job.duration_seconds)}</span>
           <span>{job.waveform_name ?? "waveform"}</span>
@@ -381,6 +450,10 @@ function requestSyncMode(runMode: RunMode, _selected: MachineApiRecord[]): SyncM
     return "scheduled";
   }
   return "immediate";
+}
+
+function shouldUseClusterStart(readyCount: number, totalCount: number | undefined): boolean {
+  return Boolean(totalCount && totalCount > CLUSTER_START_THRESHOLD && readyCount >= totalCount);
 }
 
 function parseSamplingMs(value: string): number | undefined {

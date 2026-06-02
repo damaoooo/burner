@@ -16,7 +16,9 @@ http://localhost:18080
 
 If you do not set `BURNER_UI_PORT`, the script uses port `8000`.
 
-In the SLURM allocation panel, `Sample / UI Refresh (ms)` defaults to `200`. This controls how often workers publish latest load metrics and how often the UI polls them. CSV sample files are decimated to about once per second to keep shared filesystem writes bounded.
+In the SLURM allocation panel, `Sample / UI Refresh (ms)` defaults to `200`. Before all workers are ready, this controls how often the UI polls allocation readiness and the current machine page. After `Ready Nodes` reaches the requested node count, the WebUI stops high-frequency status polling and only refreshes node details when the page/session changes or a user action requires it.
+
+For allocations above 50 nodes, the WebUI uses a compact cluster burn path. Start/stop/status events are represented as one aggregate cluster job instead of one websocket/HTTP job record per node, so a 2000-node allocation does not push 2000 job messages through the browser.
 
 Optional environment variables:
 

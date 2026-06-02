@@ -88,6 +88,7 @@ export interface WaveformInfo {
 export interface JobInfo {
   job_id: string;
   machine_id: string;
+  node_count?: number;
   pid: number;
   started_at: number;
   duration_seconds: number;
@@ -176,6 +177,7 @@ export interface SlurmAllocation {
   job_id?: string;
   session_dir?: string;
   nodes_requested?: number;
+  nodes_seen?: number;
   nodes_ready?: number;
   poll_ms?: number;
   sample_ms?: number;
@@ -199,6 +201,7 @@ export type WsEvent =
       event: "burn_started";
       job_id?: string;
       id: string;
+      node_count?: number;
       pid: number;
       started_at?: number;
       duration_seconds: number;
@@ -269,4 +272,13 @@ export interface BurnStartRequest {
     delay_seconds: number;
     waveform_name: string;
   }>;
+}
+
+export interface BurnStartAllRequest {
+  sync_mode: "immediate" | "scheduled";
+  start_time_utc?: string;
+  duration: string;
+  period: string;
+  tick_seconds: number;
+  waveform_name: string;
 }

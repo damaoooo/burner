@@ -35,7 +35,7 @@ export default function SchedulePanel({ onToast }: Props) {
         <div className="schedule-table manager-table">
           {scheduled.map((job) => (
             <div className="schedule-row manager-row" key={job.job_id}>
-              <span>{machineName(job.machine_id, state.machines)}</span>
+              <span>{job.node_count ? `${job.node_count} nodes` : machineName(job.machine_id, state.machines)}</span>
               <span>{formatLocal(job.started_at)}</span>
               <span>{formatLocal(job.started_at + job.duration_seconds)}</span>
               <span>{job.waveform_name ?? "waveform"}</span>
