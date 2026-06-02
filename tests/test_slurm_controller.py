@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -186,6 +187,68 @@ def test_list_machines_paginates_and_allocation_omits_full_nodes(tmp_path):
         assert status["nodes_requested"] == 3
         assert status["nodes_ready"] == 3
         assert "nodes" not in status
+
+    asyncio.run(run_test())
+
+
+def test_allocation_status_counts_online_nodes_without_reading_json(tmp_path, monkeypatch):
+    async def run_test():
+        controller = SlurmController(
+            WaveformStore(custom_dir=tmp_path / "waveforms"),
+            broadcast=lambda payload: async_noop(payload),
+            control_base=tmp_path / "control",
+            repo_root=ROOT,
+            conda_env="burner",
+            slurm_client=FakeSlurmClient(),
+        )
+        await controller.submit_allocation(nodes=2, time_limit="05:00:00", poll_ms=10)
+        session_dir = Path((await controller.allocation_status())["session_dir"])
+        write_node(session_dir, "nid001")
+        write_node(session_dir, "nid002")
+        stale_time = 1
+        os.utime(session_dir / "nodes" / "nid002.json", (stale_time, stale_time))
+        monkeypatch.setattr(
+            controller,
+            "_read_nodes",
+            lambda session: (_ for _ in ()).throw(AssertionError("status read full node JSON")),
+        )
+
+        status = await controller.allocation_status()
+
+        assert status["nodes_seen"] == 2
+        assert status["nodes_ready"] == 1
+
+    asyncio.run(run_test())
+
+
+def test_list_machines_page_reads_only_requested_node_json(tmp_path, monkeypatch):
+    async def run_test():
+        controller = SlurmController(
+            WaveformStore(custom_dir=tmp_path / "waveforms"),
+            broadcast=lambda payload: async_noop(payload),
+            control_base=tmp_path / "control",
+            repo_root=ROOT,
+            conda_env="burner",
+            slurm_client=FakeSlurmClient(),
+        )
+        await controller.submit_allocation(nodes=3, time_limit="05:00:00", poll_ms=10)
+        session_dir = Path((await controller.allocation_status())["session_dir"])
+        write_node(session_dir, "nid001")
+        write_node(session_dir, "nid002")
+        write_node(session_dir, "nid003")
+        read_paths = []
+        original = controller._read_node_file
+
+        def read_node_file(path):
+            read_paths.append(path.name)
+            return original(path)
+
+        monkeypatch.setattr(controller, "_read_node_file", read_node_file)
+
+        page = await controller.list_machines(offset=1, limit=1)
+
+        assert [node["id"] for node in page] == ["nid002"]
+        assert read_paths == ["nid002.json"]
 
     asyncio.run(run_test())
 

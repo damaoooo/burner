@@ -348,15 +348,7 @@ class SlurmController:
                 "active": False,
                 "status": slurm_state,
             }
-        nodes = self._read_nodes_cached(session)
-        ready_count = len(
-            [
-                node
-                for node in nodes
-                if node.get("connection_status") == "connected"
-                and node.get("worker_status") in {"ready", "arming", "burning"}
-            ]
-        )
+        nodes_seen, ready_count = self._count_online_node_files(session)
         return {
             "active": active,
             "status": slurm_state,
@@ -364,6 +356,7 @@ class SlurmController:
             "job_id": session.job_id,
             "session_dir": str(session.session_dir),
             "nodes_requested": session.nodes_requested,
+            "nodes_seen": nodes_seen,
             "nodes_ready": ready_count,
             "poll_ms": session.poll_ms,
             "sample_ms": session.sample_ms,
@@ -375,12 +368,11 @@ class SlurmController:
         session = self._load_current_session()
         if session is None:
             return []
-        nodes = self._read_nodes_cached(session)
         offset = max(0, int(offset))
         if limit is None:
-            return nodes[offset:]
+            return self._read_nodes_cached(session)[offset:]
         limit = max(1, min(int(limit), 10000))
-        return nodes[offset : offset + limit]
+        return self._read_nodes_page(session, offset, limit)
 
     async def get_machine(self, machine_id: str) -> dict[str, object] | None:
         session = self._load_current_session()
@@ -630,71 +622,109 @@ class SlurmController:
     def _read_nodes(self, session: SlurmSession) -> list[dict[str, object]]:
         nodes = []
         for path in sorted((session.session_dir / "nodes").glob("*.json")):
-            try:
-                raw = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            node_id = str(raw.get("node_id") or path.stem)
-            hw = raw.get("hw_info") if isinstance(raw.get("hw_info"), dict) else {}
-            latest_power = raw.get("latest_power") if isinstance(raw.get("latest_power"), dict) else None
-            heartbeat = _parse_iso_epoch(raw.get("heartbeat_at"))
-            stale = heartbeat is None or time.time() - heartbeat > WORKER_STALE_SECONDS
-            worker_status = str(raw.get("status") or "unknown")
-            connection_status = "connected"
-            if stale:
-                connection_status = "error"
-            elif worker_status in {"initializing", "building"}:
-                connection_status = "connecting"
-            error_message = "worker heartbeat is stale" if stale else raw.get("message")
-            job = next(
-                (
-                    job.to_dict()
-                    for job in self._jobs.values()
-                    if job.machine_id == node_id
-                ),
-                None,
-            )
-            cpu_socket_count = int(hw.get("cpu_socket_count") or 0)
-            cpu_tdp_per_socket = _float_or_zero(hw.get("cpu_tdp_per_socket_watts") or hw.get("cpu_tdp_watts"))
-            cpu_tdp_total = _float_or_zero(hw.get("cpu_tdp_total_watts"))
-            if cpu_tdp_total <= 0 and cpu_socket_count > 0 and cpu_tdp_per_socket > 0:
-                cpu_tdp_total = cpu_socket_count * cpu_tdp_per_socket
-            cpu_tdp = cpu_tdp_total or cpu_tdp_per_socket
-            nodes.append(
-                {
-                    "id": node_id,
-                    "name": node_id,
-                    "host": str(hw.get("ip_address") or raw.get("hostname") or node_id),
-                    "port": 0,
-                    "username": "",
-                    "identity_file": "",
-                    "workdir": str(self._repo_root),
-                    "cpu_tdp": cpu_tdp,
-                    "gpu_tdp": 0.0,
-                    "conda_env": self._conda_env,
-                    "connection_status": connection_status,
-                    "error_message": error_message,
-                    "worker_status": worker_status,
-                    "hw_info": {
-                        "cpu_model": str(hw.get("cpu_model") or ""),
-                        "cpu_tdp": cpu_tdp,
-                        "cpu_socket_count": cpu_socket_count,
-                        "cpu_tdp_per_socket_watts": cpu_tdp_per_socket,
-                        "cpu_tdp_total_watts": cpu_tdp_total,
-                        "gpu_tdp": 0.0,
-                        "gpus": [],
-                        "cpu_count": int(hw.get("cpu_count") or 0),
-                        "memory_total_gb": _float_or_zero(hw.get("memory_total_gb")),
-                        "ip_address": str(hw.get("ip_address") or ""),
-                        "slurm_node": str(raw.get("slurm_node") or node_id),
-                        "worker_status": worker_status,
-                        "last_heartbeat": raw.get("heartbeat_at"),
-                        "latest_power": latest_power,
-                    },
-                    "job": job,
-                }
-            )
+            node = self._read_node_file(path)
+            if node is not None:
+                nodes.append(node)
         return nodes
+
+    def _read_nodes_page(
+        self,
+        session: SlurmSession,
+        offset: int,
+        limit: int,
+    ) -> list[dict[str, object]]:
+        paths = sorted((session.session_dir / "nodes").glob("*.json"))
+        nodes = []
+        for path in paths[offset : offset + limit]:
+            node = self._read_node_file(path)
+            if node is not None:
+                nodes.append(node)
+        return nodes
+
+    def _read_node_file(self, path: Path) -> dict[str, object] | None:
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        node_id = str(raw.get("node_id") or path.stem)
+        hw = raw.get("hw_info") if isinstance(raw.get("hw_info"), dict) else {}
+        latest_power = raw.get("latest_power") if isinstance(raw.get("latest_power"), dict) else None
+        heartbeat = _parse_iso_epoch(raw.get("heartbeat_at"))
+        stale = heartbeat is None or time.time() - heartbeat > WORKER_STALE_SECONDS
+        worker_status = str(raw.get("status") or "unknown")
+        connection_status = "connected"
+        if stale:
+            connection_status = "error"
+        elif worker_status in {"initializing", "building"}:
+            connection_status = "connecting"
+        error_message = "worker heartbeat is stale" if stale else raw.get("message")
+        job = next(
+            (
+                job.to_dict()
+                for job in self._jobs.values()
+                if job.machine_id == node_id
+            ),
+            None,
+        )
+        cpu_socket_count = int(hw.get("cpu_socket_count") or 0)
+        cpu_tdp_per_socket = _float_or_zero(hw.get("cpu_tdp_per_socket_watts") or hw.get("cpu_tdp_watts"))
+        cpu_tdp_total = _float_or_zero(hw.get("cpu_tdp_total_watts"))
+        if cpu_tdp_total <= 0 and cpu_socket_count > 0 and cpu_tdp_per_socket > 0:
+            cpu_tdp_total = cpu_socket_count * cpu_tdp_per_socket
+        cpu_tdp = cpu_tdp_total or cpu_tdp_per_socket
+        return {
+            "id": node_id,
+            "name": node_id,
+            "host": str(hw.get("ip_address") or raw.get("hostname") or node_id),
+            "port": 0,
+            "username": "",
+            "identity_file": "",
+            "workdir": str(self._repo_root),
+            "cpu_tdp": cpu_tdp,
+            "gpu_tdp": 0.0,
+            "conda_env": self._conda_env,
+            "connection_status": connection_status,
+            "error_message": error_message,
+            "worker_status": worker_status,
+            "hw_info": {
+                "cpu_model": str(hw.get("cpu_model") or ""),
+                "cpu_tdp": cpu_tdp,
+                "cpu_socket_count": cpu_socket_count,
+                "cpu_tdp_per_socket_watts": cpu_tdp_per_socket,
+                "cpu_tdp_total_watts": cpu_tdp_total,
+                "gpu_tdp": 0.0,
+                "gpus": [],
+                "cpu_count": int(hw.get("cpu_count") or 0),
+                "memory_total_gb": _float_or_zero(hw.get("memory_total_gb")),
+                "ip_address": str(hw.get("ip_address") or ""),
+                "slurm_node": str(raw.get("slurm_node") or node_id),
+                "worker_status": worker_status,
+                "last_heartbeat": raw.get("heartbeat_at"),
+                "latest_power": latest_power,
+            },
+            "job": job,
+        }
+
+    def _count_online_node_files(self, session: SlurmSession) -> tuple[int, int]:
+        nodes_dir = session.session_dir / "nodes"
+        try:
+            paths = list(nodes_dir.iterdir())
+        except OSError:
+            return 0, 0
+        now = time.time()
+        nodes_seen = 0
+        nodes_online = 0
+        for path in paths:
+            if path.suffix != ".json":
+                continue
+            nodes_seen += 1
+            try:
+                mtime = path.stat().st_mtime
+            except OSError:
+                continue
+            if now - mtime <= WORKER_STALE_SECONDS:
+                nodes_online += 1
+        return nodes_seen, nodes_online
 
     def _read_nodes_cached(self, session: SlurmSession) -> list[dict[str, object]]:
         now = time.monotonic()

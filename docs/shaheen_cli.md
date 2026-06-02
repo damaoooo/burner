@@ -83,6 +83,8 @@ Check status:
 conda run --no-capture-output -n burner python scripts/shaheen_cli.py status
 ```
 
+`status` is an aggregate fast path for large allocations. It counts online worker files by shared-filesystem mtime and does not read every node JSON payload. Use `status --nodes --offset <n> --limit <m>` only when you need a page of node details.
+
 Stop burn but keep nodes:
 
 ```bash
