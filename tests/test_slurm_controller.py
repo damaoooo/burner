@@ -467,6 +467,36 @@ def test_load_series_reads_finished_node_csv_and_builds_cluster_series(tmp_path)
     asyncio.run(run_test())
 
 
+def test_load_series_cluster_only_streams_without_full_sample_objects(tmp_path, monkeypatch):
+    async def run_test():
+        controller = SlurmController(
+            WaveformStore(custom_dir=tmp_path / "waveforms"),
+            broadcast=lambda payload: async_noop(payload),
+            control_base=tmp_path / "control",
+            repo_root=ROOT,
+            conda_env="burner",
+            slurm_client=FakeSlurmClient(),
+        )
+        await controller.submit_allocation(nodes=2, time_limit="05:00:00", poll_ms=10)
+        session_dir = Path((await controller.allocation_status())["session_dir"])
+        write_sample(session_dir, "nid001", [100.0, 200.0, 300.0])
+        write_sample(session_dir, "nid002", [10.0, 20.0, 30.0])
+        monkeypatch.setattr(
+            controller,
+            "_read_load_samples",
+            lambda session: (_ for _ in ()).throw(AssertionError("cluster load-series read full samples")),
+        )
+
+        series = controller.load_series(max_points=10, include_nodes=False)
+
+        assert series["node_count"] == 2
+        assert series["nodes"] == []
+        assert series["cluster"]["sample_count"] == 6
+        assert series["cluster"]["points"][0]["watts"] == 110.0
+
+    asyncio.run(run_test())
+
+
 def test_worker_writes_burn_samples_to_local_tmp_until_finalize(tmp_path, monkeypatch):
     monkeypatch.setenv("SLURMD_NODENAME", "nidtest")
     monkeypatch.setattr(

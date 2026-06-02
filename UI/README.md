@@ -20,6 +20,8 @@ In the SLURM allocation panel, `Sample / UI Refresh (ms)` defaults to `200`. Bef
 
 For allocations above 50 nodes, the WebUI uses a compact cluster burn path. Start/stop/status events are represented as one aggregate cluster job instead of one websocket/HTTP job record per node, so a 2000-node allocation does not push 2000 job messages through the browser.
 
+After a burn finishes, the cluster power chart is built from completed per-node CSV files. On large allocations, workers first copy local `/tmp` samples back to the shared session directory, then the backend streams those files into a downsampled cluster curve. The first chart load reads the completed CSV files once; repeated loads of the same completed sample set are served from an in-memory cache.
+
 Optional environment variables:
 
 ```bash

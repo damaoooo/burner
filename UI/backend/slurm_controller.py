@@ -261,6 +261,7 @@ class SlurmController:
         self._jobs: dict[str, SlurmBurnJob] = {}
         self._lock = asyncio.Lock()
         self._nodes_cache: tuple[str, float, list[dict[str, object]]] | None = None
+        self._load_series_cache: tuple[tuple[object, ...], dict[str, object]] | None = None
 
     async def submit_allocation(
         self,
@@ -564,6 +565,31 @@ class SlurmController:
             raise SlurmError("no SLURM session samples are available")
 
         max_points = max(10, min(int(max_points), 5000))
+        sample_paths = sorted((session.session_dir / "samples").glob("*.csv"))
+        if not sample_paths:
+            raise SlurmError("no node load samples are available for the latest SLURM session")
+        cache_key = _load_series_cache_key(session, sample_paths, max_points, include_nodes)
+        if self._load_series_cache is not None and self._load_series_cache[0] == cache_key:
+            return self._load_series_cache[1]
+
+        if not include_nodes:
+            cluster = _cluster_load_points_from_files(sample_paths, max_points)
+            if not cluster["points"]:
+                raise SlurmError("no node load samples are available for the latest SLURM session")
+            result = {
+                "session_id": session.session_id,
+                "job_id": session.job_id,
+                "generated_at": iso_z(datetime.now(UTC)),
+                "node_count": cluster["node_count"],
+                "nodes": [],
+                "cluster": {
+                    "sample_count": cluster["sample_count"],
+                    "points": cluster["points"],
+                },
+            }
+            self._load_series_cache = (cache_key, result)
+            return result
+
         samples_by_node = self._read_load_samples(session)
         if not samples_by_node:
             raise SlurmError("no node load samples are available for the latest SLURM session")
@@ -582,7 +608,7 @@ class SlurmController:
                     }
                 )
 
-        return {
+        result = {
             "session_id": session.session_id,
             "job_id": session.job_id,
             "generated_at": iso_z(datetime.now(UTC)),
@@ -593,6 +619,8 @@ class SlurmController:
                 "points": _cluster_load_points(samples_by_node, max_points),
             },
         }
+        self._load_series_cache = (cache_key, result)
+        return result
 
     def status(self, compact: bool = True) -> list[dict[str, object]]:
         now = time.time()
@@ -871,6 +899,33 @@ def validate_node_count(value: int) -> int:
     return value
 
 
+def _load_series_cache_key(
+    session: SlurmSession,
+    sample_paths: list[Path],
+    max_points: int,
+    include_nodes: bool,
+) -> tuple[object, ...]:
+    total_size = 0
+    latest_mtime_ns = 0
+    readable_files = 0
+    for path in sample_paths:
+        try:
+            stat_result = path.stat()
+        except OSError:
+            continue
+        readable_files += 1
+        total_size += stat_result.st_size
+        latest_mtime_ns = max(latest_mtime_ns, stat_result.st_mtime_ns)
+    return (
+        session.session_id,
+        max_points,
+        include_nodes,
+        readable_files,
+        total_size,
+        latest_mtime_ns,
+    )
+
+
 def compact_burn_job_dicts(jobs: list[dict[str, object]]) -> list[dict[str, object]]:
     if len(jobs) <= MAX_DETAILED_BURN_JOBS:
         return jobs
@@ -1109,6 +1164,186 @@ def _cluster_load_points(samples_by_node: dict[str, list[LoadSample]], max_point
     if len(points) > max_points:
         return points[:max_points]
     return points
+
+
+def _cluster_load_points_from_files(sample_paths: list[Path], max_points: int) -> dict[str, object]:
+    bounds: list[Path] = []
+    start_ms: int | None = None
+    end_ms: int | None = None
+    for sample_path in sample_paths:
+        first, last = _load_sample_file_bounds(sample_path)
+        if first is None or last is None:
+            continue
+        bounds.append(sample_path)
+        start_ms = first if start_ms is None else min(start_ms, first)
+        end_ms = last if end_ms is None else max(end_ms, last)
+
+    if start_ms is None or end_ms is None or not bounds:
+        return {"node_count": 0, "sample_count": 0, "points": []}
+
+    if end_ms <= start_ms:
+        step_ms = 50
+        bucket_count = 1
+    else:
+        step_ms = max(50, math.ceil((end_ms - start_ms) / max(1, max_points - 1)))
+        bucket_count = min(max_points, math.floor((end_ms - start_ms) / step_ms) + 1)
+        if start_ms + (bucket_count - 1) * step_ms < end_ms and bucket_count < max_points:
+            bucket_count += 1
+
+    totals = [0.0] * bucket_count
+    counts = [0] * bucket_count
+    sample_count = 0
+    node_count = 0
+    for sample_path in bounds:
+        values, first_index, last_index, node_samples = _load_sample_file_buckets(
+            sample_path,
+            start_ms,
+            step_ms,
+            bucket_count,
+        )
+        if first_index is None or last_index is None:
+            continue
+        sample_count += node_samples
+        node_count += 1
+        last_value = None
+        for index in range(first_index, last_index + 1):
+            value = values[index]
+            if value is not None:
+                last_value = value
+            if last_value is not None:
+                totals[index] += last_value
+                counts[index] += 1
+
+    points = [
+        {
+            "timestamp": _iso_from_ms(start_ms + index * step_ms),
+            "watts": round(totals[index], 6),
+            "nodes_reported": counts[index],
+        }
+        for index in range(bucket_count)
+        if counts[index] > 0
+    ]
+    return {"node_count": node_count, "sample_count": sample_count, "points": points}
+
+
+def _load_sample_file_bounds(path: Path) -> tuple[int | None, int | None]:
+    first: int | None = None
+    columns: tuple[int, int | None, int | None] | None = None
+    try:
+        with path.open("r", newline="", encoding="utf-8") as handle:
+            reader = csv.reader(handle)
+            header = next(reader, None)
+            if header is None:
+                return None, None
+            columns = _load_sample_columns(header)
+            if columns is None:
+                return None, None
+            for row in reader:
+                parsed = _parse_load_sample_row(row, columns)
+                if parsed is not None:
+                    first = parsed[0]
+                    break
+    except OSError:
+        return None, None
+    if first is None or columns is None:
+        return None, None
+
+    last = None
+    line = _read_last_nonempty_line(path)
+    if line:
+        try:
+            row = next(csv.reader([line]))
+        except csv.Error:
+            row = []
+        parsed = _parse_load_sample_row(row, columns)
+        if parsed is not None:
+            last = parsed[0]
+    return first, last or first
+
+
+def _load_sample_file_buckets(
+    path: Path,
+    start_ms: int,
+    step_ms: int,
+    bucket_count: int,
+) -> tuple[list[float | None], int | None, int | None, int]:
+    values: list[float | None] = [None] * bucket_count
+    first_index: int | None = None
+    last_index: int | None = None
+    sample_count = 0
+    try:
+        with path.open("r", newline="", encoding="utf-8") as handle:
+            reader = csv.reader(handle)
+            header = next(reader, None)
+            if header is None:
+                return values, None, None, 0
+            columns = _load_sample_columns(header)
+            if columns is None:
+                return values, None, None, 0
+            for row in reader:
+                parsed = _parse_load_sample_row(row, columns)
+                if parsed is None:
+                    continue
+                timestamp_ms, watts = parsed
+                index = max(0, min(bucket_count - 1, (timestamp_ms - start_ms) // step_ms))
+                values[index] = watts
+                first_index = index if first_index is None else min(first_index, index)
+                last_index = index if last_index is None else max(last_index, index)
+                sample_count += 1
+    except OSError:
+        return values, None, None, 0
+    return values, first_index, last_index, sample_count
+
+
+def _load_sample_columns(header: list[str]) -> tuple[int, int | None, int | None] | None:
+    names = {name: index for index, name in enumerate(header)}
+    timestamp_index = names.get("timestamp")
+    if timestamp_index is None:
+        return None
+    return (
+        timestamp_index,
+        names.get("cpu_watts"),
+        names.get("cpu_watts_estimated"),
+    )
+
+
+def _parse_load_sample_row(
+    row: list[str],
+    columns: tuple[int, int | None, int | None],
+) -> tuple[int, float] | None:
+    timestamp_index, cpu_watts_index, estimated_index = columns
+    if timestamp_index >= len(row):
+        return None
+    timestamp_ms = _parse_iso_ms(row[timestamp_index])
+    if timestamp_ms is None:
+        return None
+    cpu_watts = _parse_optional_float(row[cpu_watts_index]) if cpu_watts_index is not None and cpu_watts_index < len(row) else None
+    estimated = _parse_optional_float(row[estimated_index]) if estimated_index is not None and estimated_index < len(row) else None
+    watts = cpu_watts if cpu_watts is not None else estimated
+    if watts is None:
+        return None
+    return timestamp_ms, watts
+
+
+def _read_last_nonempty_line(path: Path, chunk_size: int = 8192) -> str | None:
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            position = handle.tell()
+            buffer = b""
+            while position > 0:
+                read_size = min(chunk_size, position)
+                position -= read_size
+                handle.seek(position)
+                buffer = handle.read(read_size) + buffer
+                lines = buffer.splitlines()
+                if len(lines) > 1 or position == 0:
+                    for raw in reversed(lines):
+                        if raw.strip():
+                            return raw.decode("utf-8", errors="replace")
+    except OSError:
+        return None
+    return None
 
 
 def _load_sample_to_dict(sample: LoadSample) -> dict[str, object]:
