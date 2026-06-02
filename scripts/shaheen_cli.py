@@ -7,7 +7,7 @@ import json
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,6 +22,15 @@ from waveform_store import WaveformStore  # noqa: E402
 
 DEFAULT_READY_TIMEOUT_SECONDS = 1800
 DEFAULT_READY_INTERVAL_SECONDS = 5.0
+DEFAULT_INTERACTIVE_TIME_LIMIT = "00:15:00"
+DEFAULT_INTERACTIVE_DURATION = "10m"
+DEFAULT_INTERACTIVE_PERIOD = "1s"
+DEFAULT_INTERACTIVE_WAVEFORM = "full"
+DEFAULT_INTERACTIVE_TICK_SECONDS = 0.1
+DEFAULT_INTERACTIVE_POLL_MS = 100
+DEFAULT_INTERACTIVE_SAMPLE_MS = 200
+
+T = TypeVar("T")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -33,7 +42,10 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="print command result as JSON",
     )
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers = parser.add_subparsers(dest="command")
+
+    interactive = subparsers.add_parser("interactive", help="open an interactive CLI shell")
+    interactive.set_defaults(command="interactive")
 
     submit = subparsers.add_parser("submit", help="submit a SLURM allocation")
     add_allocation_args(submit)
@@ -64,6 +76,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     export = subparsers.add_parser("export-load", help="write combined node load CSV")
     export.add_argument("-o", "--output", type=Path, help="output CSV path")
+
+    parser.set_defaults(command="interactive")
 
     return parser
 
@@ -97,6 +111,9 @@ async def main_async(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     ctl = controller()
     try:
+        if args.command == "interactive":
+            return await interactive_shell(ctl)
+
         if args.command == "submit":
             result = await ctl.submit_allocation(
                 nodes=args.nodes,
@@ -171,6 +188,264 @@ async def main_async(argv: list[str] | None = None) -> int:
     except (BurnError, SlurmConflictError, SlurmError, TimeoutError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+
+
+async def interactive_shell(ctl: SlurmController) -> int:
+    print_interactive_help()
+    while True:
+        try:
+            command = normalize_interactive_command(input("burner> "))
+        except EOFError:
+            print()
+            return 0
+        except KeyboardInterrupt:
+            print()
+            continue
+
+        if not command:
+            continue
+        if command == "quit":
+            return 0
+        if command == "help":
+            print_interactive_help()
+            continue
+
+        try:
+            if command == "status":
+                await interactive_status(ctl)
+            elif command == "submit":
+                await interactive_submit(ctl)
+            elif command == "wait-ready":
+                await interactive_wait_ready(ctl)
+            elif command == "start":
+                await interactive_start(ctl)
+            elif command == "run":
+                await interactive_run(ctl)
+            elif command == "stop":
+                await interactive_stop(ctl)
+            elif command == "release":
+                await interactive_release(ctl)
+            elif command == "export-load":
+                await interactive_export_load(ctl)
+            else:
+                print(f"unknown command: {command}. Type help for commands.")
+        except KeyboardInterrupt:
+            print("\ncommand cancelled")
+        except (BurnError, SlurmConflictError, SlurmError, TimeoutError, ValueError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+
+
+def normalize_interactive_command(command: str) -> str:
+    command = command.strip().lower()
+    aliases = {
+        "?": "help",
+        "h": "help",
+        "1": "status",
+        "2": "submit",
+        "3": "wait-ready",
+        "4": "start",
+        "5": "run",
+        "6": "stop",
+        "7": "release",
+        "8": "export-load",
+        "q": "quit",
+        "exit": "quit",
+    }
+    return aliases.get(command, command)
+
+
+def print_interactive_help() -> None:
+    print(
+        "\n".join(
+            [
+                "Shaheen burner interactive CLI",
+                "Commands:",
+                "  1 status       show aggregate SLURM allocation state",
+                "  2 submit       submit an allocation",
+                "  3 wait-ready   wait until all workers are ready",
+                "  4 start        start CPU burn on the current allocation",
+                "  5 run          submit, wait-ready, then start",
+                "  6 stop         stop burn and keep nodes allocated",
+                "  7 release      release the current allocation",
+                "  8 export-load  write latest load samples to CSV",
+                "  help           show this menu",
+                "  quit           exit the CLI",
+                "",
+            ]
+        )
+    )
+
+
+async def interactive_status(ctl: SlurmController) -> None:
+    status = await ctl.allocation_status()
+    print(summarize_result(status))
+
+
+async def interactive_submit(ctl: SlurmController) -> dict[str, object]:
+    args = prompt_allocation_args()
+    result = await ctl.submit_allocation(
+        nodes=args.nodes,
+        time_limit=args.time_limit,
+        poll_ms=args.poll_ms,
+        sample_ms=args.sample_ms,
+    )
+    print_result(non_json_args(), result)
+    return result
+
+
+async def interactive_wait_ready(ctl: SlurmController) -> dict[str, object]:
+    timeout = prompt_float("Ready timeout seconds", DEFAULT_READY_TIMEOUT_SECONDS)
+    interval = prompt_float("Ready poll interval seconds", DEFAULT_READY_INTERVAL_SECONDS)
+    result = await wait_until_ready(
+        ctl,
+        timeout_seconds=timeout,
+        interval_seconds=interval,
+        quiet=False,
+    )
+    print_result(non_json_args(), result)
+    return result
+
+
+async def interactive_start(ctl: SlurmController) -> dict[str, object]:
+    args = prompt_start_args()
+    result = await start_all_ready(ctl, args)
+    print_result(non_json_args(), result)
+    return result
+
+
+async def interactive_run(ctl: SlurmController) -> dict[str, object]:
+    allocation_args = prompt_allocation_args()
+    timeout = prompt_float("Ready timeout seconds", DEFAULT_READY_TIMEOUT_SECONDS)
+    interval = prompt_float("Ready poll interval seconds", DEFAULT_READY_INTERVAL_SECONDS)
+    start_args = prompt_start_args()
+
+    allocation = await ctl.submit_allocation(
+        nodes=allocation_args.nodes,
+        time_limit=allocation_args.time_limit,
+        poll_ms=allocation_args.poll_ms,
+        sample_ms=allocation_args.sample_ms,
+    )
+    print_human(non_json_args(), f"submitted job {allocation.get('job_id')} for {allocation.get('nodes_requested')} nodes")
+    ready = await wait_until_ready(
+        ctl,
+        timeout_seconds=timeout,
+        interval_seconds=interval,
+        quiet=False,
+    )
+    started = await start_all_ready(ctl, start_args)
+    result = {"allocation": allocation, "ready": ready, "started": started}
+    print_result(non_json_args(), result)
+    return result
+
+
+async def interactive_stop(ctl: SlurmController) -> None:
+    await ctl.stop_burn(job_ids="all")
+    print_result(non_json_args(), {"status": "stopped"})
+
+
+async def interactive_release(ctl: SlurmController) -> dict[str, object] | None:
+    if not prompt_bool("Release current allocation", default=False):
+        print("release cancelled")
+        return None
+    result = await ctl.release_allocation()
+    print_result(non_json_args(), result)
+    return result
+
+
+async def interactive_export_load(ctl: SlurmController) -> dict[str, object]:
+    filename, content = ctl.export_load_csv()
+    default = str(Path(filename).resolve())
+    output = Path(prompt_text("Output CSV path", default))
+    output.write_text(content, encoding="utf-8")
+    result = {"output": str(output), "bytes": len(content.encode("utf-8"))}
+    print_result(non_json_args(), result)
+    return result
+
+
+def prompt_allocation_args() -> argparse.Namespace:
+    return argparse.Namespace(
+        nodes=prompt_int("Nodes", required=True),
+        time_limit=prompt_text("SLURM time limit", DEFAULT_INTERACTIVE_TIME_LIMIT),
+        poll_ms=prompt_int("Worker poll ms", DEFAULT_INTERACTIVE_POLL_MS),
+        sample_ms=prompt_int("Sample ms", DEFAULT_INTERACTIVE_SAMPLE_MS),
+    )
+
+
+def prompt_start_args() -> argparse.Namespace:
+    start_at = prompt_text("Scheduled UTC start time, blank for immediate", "")
+    return argparse.Namespace(
+        duration=prompt_text("Burn duration", DEFAULT_INTERACTIVE_DURATION),
+        period=prompt_text("Waveform period", DEFAULT_INTERACTIVE_PERIOD),
+        waveform=prompt_text("Waveform", DEFAULT_INTERACTIVE_WAVEFORM),
+        tick=prompt_float("Burner tick seconds", DEFAULT_INTERACTIVE_TICK_SECONDS),
+        start_at=start_at or None,
+    )
+
+
+def prompt_text(label: str, default: str | None = None, required: bool = False) -> str:
+    while True:
+        raw = input(prompt_label(label, default))
+        value = raw.strip()
+        if value:
+            return value
+        if default is not None:
+            return default
+        if not required:
+            return ""
+        print(f"{label} is required")
+
+
+def prompt_int(label: str, default: int | None = None, required: bool = False) -> int:
+    return prompt_cast(label, int, default, required)
+
+
+def prompt_float(label: str, default: float | None = None, required: bool = False) -> float:
+    return prompt_cast(label, float, default, required)
+
+
+def prompt_cast(
+    label: str,
+    cast: Callable[[str], T],
+    default: T | None = None,
+    required: bool = False,
+) -> T:
+    while True:
+        raw = input(prompt_label(label, default))
+        value = raw.strip()
+        if not value:
+            if default is not None:
+                return default
+            if not required:
+                raise ValueError(f"{label} is required")
+            print(f"{label} is required")
+            continue
+        try:
+            return cast(value)
+        except ValueError:
+            print(f"{label} must be a valid {cast.__name__}")
+
+
+def prompt_bool(label: str, default: bool = False) -> bool:
+    suffix = "Y/n" if default else "y/N"
+    while True:
+        raw = input(f"{label} [{suffix}]: ").strip().lower()
+        if not raw:
+            return default
+        if raw in {"y", "yes"}:
+            return True
+        if raw in {"n", "no"}:
+            return False
+        print("enter y or n")
+
+
+def prompt_label(label: str, default: object | None = None) -> str:
+    if default is None or default == "":
+        return f"{label}: "
+    return f"{label} [{default}]: "
+
+
+def non_json_args() -> argparse.Namespace:
+    return argparse.Namespace(json=False)
 
 
 async def wait_until_ready(

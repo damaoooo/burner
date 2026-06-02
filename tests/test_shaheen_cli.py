@@ -31,6 +31,33 @@ def test_parser_run_defaults_to_full_waveform():
     assert args.sample_ms == 200
 
 
+def test_parser_defaults_to_interactive_without_command():
+    args = shaheen_cli.build_parser().parse_args([])
+
+    assert args.command == "interactive"
+
+
+def test_parser_accepts_explicit_interactive_command():
+    args = shaheen_cli.build_parser().parse_args(["interactive"])
+
+    assert args.command == "interactive"
+
+
+def test_interactive_command_aliases_are_normalized():
+    assert shaheen_cli.normalize_interactive_command("?") == "help"
+    assert shaheen_cli.normalize_interactive_command("h") == "help"
+    assert shaheen_cli.normalize_interactive_command("q") == "quit"
+    assert shaheen_cli.normalize_interactive_command("exit") == "quit"
+    assert shaheen_cli.normalize_interactive_command("1") == "status"
+    assert shaheen_cli.normalize_interactive_command("5") == "run"
+    assert shaheen_cli.normalize_interactive_command("status") == "status"
+
+
+def test_prompt_label_includes_defaults():
+    assert shaheen_cli.prompt_label("Nodes") == "Nodes: "
+    assert shaheen_cli.prompt_label("Time", "00:15:00") == "Time [00:15:00]: "
+
+
 def test_build_machine_requests_enables_cpu_only_for_all_nodes():
     requests = shaheen_cli.build_machine_requests(
         [{"id": "nid001"}, {"id": "nid002"}],
