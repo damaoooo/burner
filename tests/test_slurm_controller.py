@@ -245,6 +245,75 @@ def test_start_uses_online_node_files_for_ready_barrier(tmp_path, monkeypatch):
     asyncio.run(run_test())
 
 
+def test_start_all_burn_writes_one_cluster_job_without_node_id_scan(tmp_path, monkeypatch):
+    async def run_test():
+        controller = SlurmController(
+            WaveformStore(custom_dir=tmp_path / "waveforms"),
+            broadcast=lambda payload: async_noop(payload),
+            control_base=tmp_path / "control",
+            repo_root=ROOT,
+            conda_env="burner",
+            slurm_client=FakeSlurmClient(),
+        )
+        await controller.submit_allocation(nodes=2, time_limit="05:00:00", poll_ms=10)
+        session_dir = Path((await controller.allocation_status())["session_dir"])
+        write_node(session_dir, "nid001")
+        write_node(session_dir, "nid002")
+        monkeypatch.setattr(
+            controller,
+            "ready_node_ids",
+            lambda session=None: (_ for _ in ()).throw(AssertionError("start-all scanned node ids")),
+        )
+
+        job = await controller.start_all_burn(
+            "immediate",
+            "10s",
+            "1s",
+            "sine",
+            tick_seconds=0.01,
+        )
+
+        command = json.loads((session_dir / "command.json").read_text(encoding="utf-8"))
+        assert command["action"] == "start"
+        assert command["waveform_name"] == "sine"
+        assert job.machine_id == CLUSTER_BURN_MACHINE_ID
+        assert job.node_count == 2
+        assert controller.status()[0]["node_count"] == 2
+
+    asyncio.run(run_test())
+
+
+def test_cluster_job_blocks_overlapping_detailed_start(tmp_path):
+    async def run_test():
+        controller = SlurmController(
+            WaveformStore(custom_dir=tmp_path / "waveforms"),
+            broadcast=lambda payload: async_noop(payload),
+            control_base=tmp_path / "control",
+            repo_root=ROOT,
+            conda_env="burner",
+            slurm_client=FakeSlurmClient(),
+        )
+        await controller.submit_allocation(nodes=1, time_limit="05:00:00", poll_ms=10)
+        session_dir = Path((await controller.allocation_status())["session_dir"])
+        write_node(session_dir, "nid001")
+        await controller.start_all_burn("immediate", "10s", "1s", "sine", tick_seconds=0.01)
+
+        try:
+            await controller.start_burn(
+                "immediate",
+                "10s",
+                "1s",
+                [MachineBurnRequest("nid001", True, True, False, 0.0, "sine")],
+                tick_seconds=0.01,
+            )
+        except BurnError as exc:
+            assert "overlaps" in str(exc)
+        else:
+            raise AssertionError("expected overlap with cluster job")
+
+    asyncio.run(run_test())
+
+
 def test_compact_burn_jobs_collapses_large_allocations():
     jobs = [
         {

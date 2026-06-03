@@ -78,7 +78,7 @@ export async function startBurn(payload: BurnStartRequest): Promise<JobInfo[]> {
 }
 
 export async function startBurnAll(payload: BurnStartAllRequest): Promise<JobInfo[]> {
-  const { data } = await http.post<JobInfo[]>("/burn/start-all", payload);
+  const { data } = await http.post<JobInfo[]>("/burn/start-all", payload, { timeout: 120000 });
   return data;
 }
 

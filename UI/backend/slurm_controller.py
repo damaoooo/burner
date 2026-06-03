@@ -206,10 +206,11 @@ class SlurmBurnJob:
     duration_seconds: float
     waveform_name: str
     sync_mode: str
+    node_count: int | None = None
 
     def to_dict(self) -> dict[str, object]:
         elapsed = max(0.0, time.time() - self.started_at)
-        return {
+        payload = {
             "job_id": self.job_id,
             "machine_id": self.machine_id,
             "pid": 0,
@@ -222,6 +223,9 @@ class SlurmBurnJob:
             "waveform_name": self.waveform_name,
             "sync_mode": self.sync_mode,
         }
+        if self.node_count is not None:
+            payload["node_count"] = self.node_count
+        return payload
 
 
 @dataclass(frozen=True)
@@ -475,6 +479,74 @@ class SlurmController:
             self._jobs[job.job_id] = job
         await self._broadcast_burn_started(plans)
         return plans
+
+    async def start_all_burn(
+        self,
+        sync_mode: Literal["immediate", "scheduled"],
+        duration: str,
+        period: str,
+        waveform_name: str,
+        start_time_utc: str | None = None,
+        tick_seconds: float = 0.1,
+    ) -> SlurmBurnJob:
+        if sync_mode not in {"immediate", "scheduled"}:
+            raise BurnError("sync_mode must be immediate or scheduled")
+
+        duration_seconds = parse_duration(duration)
+        parse_period(period)
+        parse_tick(tick_seconds)
+
+        session = self._require_session()
+        _, ready_count = self._count_online_node_files(session)
+        if ready_count != session.nodes_requested:
+            raise BurnError(
+                f"waiting for all workers: {ready_count}/{session.nodes_requested} ready"
+            )
+
+        waveform_source = self._waveforms.path_for(waveform_name)
+        waveform_path = session.session_dir / "curve.csv"
+        shutil.copyfile(waveform_source, waveform_path)
+
+        lead_seconds = self._start_lead_seconds(session)
+        if sync_mode == "scheduled":
+            start_time = parse_utc_start(start_time_utc)
+            min_start = datetime.now(UTC) + timedelta(seconds=lead_seconds)
+            if start_time <= min_start:
+                raise BurnError(
+                    f"scheduled start time must be at least {lead_seconds:.1f}s in the future"
+                )
+        else:
+            start_time = datetime.now(UTC) + timedelta(seconds=lead_seconds)
+
+        plan = SlurmBurnJob(
+            job_id=f"{session.session_id}-{CLUSTER_BURN_JOB_ID}-{uuid.uuid4().hex[:8]}",
+            machine_id=CLUSTER_BURN_MACHINE_ID,
+            started_at=start_time.timestamp(),
+            duration_seconds=duration_seconds,
+            waveform_name=waveform_name,
+            sync_mode=sync_mode,
+            node_count=session.nodes_requested,
+        )
+        self._check_cluster_overlap(plan)
+        self._write_command(
+            session,
+            {
+                "sequence": self._next_command_sequence(session),
+                "action": "start",
+                "created_at": iso_z(datetime.now(UTC)),
+                "start_at": iso_z(start_time),
+                "duration": duration,
+                "period": period,
+                "tick_seconds": tick_seconds,
+                "waveform_path": str(waveform_path),
+                "waveform_name": waveform_name,
+                "start_lead_seconds": lead_seconds,
+            },
+        )
+
+        self._jobs[plan.job_id] = plan
+        await self._broadcast_burn_started([plan])
+        return plan
 
     async def stop_burn(
         self,
@@ -802,7 +874,11 @@ class SlurmController:
             new_start = plan.started_at
             new_end = new_start + plan.duration_seconds
             for existing in self._jobs.values():
-                if existing.machine_id != plan.machine_id:
+                if (
+                    existing.machine_id != CLUSTER_BURN_MACHINE_ID
+                    and plan.machine_id != CLUSTER_BURN_MACHINE_ID
+                    and existing.machine_id != plan.machine_id
+                ):
                     continue
                 existing_start = existing.started_at
                 existing_end = existing_start + existing.duration_seconds
@@ -812,6 +888,15 @@ class SlurmController:
                     )
         if conflicts:
             raise BurnOverlapError("; ".join(conflicts))
+
+    def _check_cluster_overlap(self, plan: SlurmBurnJob) -> None:
+        new_start = plan.started_at
+        new_end = new_start + plan.duration_seconds
+        for existing in self._jobs.values():
+            existing_start = existing.started_at
+            existing_end = existing.started_at + existing.duration_seconds
+            if new_start < existing_end + 5.0 and existing_start < new_end + 5.0:
+                raise BurnOverlapError(f"requested cluster window overlaps {existing.job_id}")
 
     def _start_lead_seconds(self, session: SlurmSession) -> float:
         configured = _optional_positive_float(os.environ.get("BURNER_SLURM_START_LEAD_SECONDS"))

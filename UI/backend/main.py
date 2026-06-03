@@ -242,23 +242,11 @@ async def start_burn(payload: BurnStartPayload):
 @app.post("/api/burn/start-all")
 async def start_burn_all(payload: BurnStartAllPayload):
     try:
-        node_ids = slurm_controller.ready_node_ids()
-        machines = [
-            MachineBurnRequest(
-                id=node_id,
-                enabled=True,
-                burn_cpu=True,
-                burn_gpu=False,
-                delay_seconds=0.0,
-                waveform_name=payload.waveform_name,
-            )
-            for node_id in node_ids
-        ]
-        jobs = await slurm_controller.start_burn(
+        job = await slurm_controller.start_all_burn(
             payload.sync_mode,
             payload.duration,
             payload.period,
-            machines,
+            payload.waveform_name,
             payload.start_time_utc,
             payload.tick_seconds,
         )
@@ -268,7 +256,7 @@ async def start_burn_all(payload: BurnStartAllPayload):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    return compact_burn_job_dicts([job.to_dict() for job in jobs])
+    return [job.to_dict()]
 
 
 @app.post("/api/burn/stop")
