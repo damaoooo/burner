@@ -20,6 +20,8 @@ In the SLURM allocation panel, `Sample / UI Refresh (ms)` defaults to `200`. Bef
 
 For allocations above 50 nodes, the WebUI uses a compact cluster burn path. Start/stop/status events are represented as one aggregate cluster job instead of one websocket/HTTP job record per node, so a 2000-node allocation does not push 2000 job messages through the browser.
 
+Start synchronization uses a shared SLURM command file with one future UTC `start_at` timestamp. Workers poll the command file, spawn `burner --start <start_at>`, prewarm lookbusy at 0%, and only switch to the waveform at the shared timestamp. For large allocations the immediate-start lead time scales with node count; 2000 nodes default to a 15 second arming window. Set `BURNER_SLURM_START_LEAD_SECONDS` before starting the UI to force a larger lead time. Worker arming acknowledgements are written under the session `acks/<sequence>/` directory for post-run timing checks.
+
 After a burn finishes, the cluster power chart is built from completed per-node CSV files. On large allocations, workers first copy local `/tmp` samples back to the shared session directory, then the backend streams those files into a downsampled cluster curve. The first chart load reads the completed CSV files once; repeated loads of the same completed sample set are served from an in-memory cache.
 
 Optional environment variables:

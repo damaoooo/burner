@@ -64,6 +64,8 @@ class Worker:
         self.burner: subprocess.Popen[str] | None = None
         self.burner_job_sequence: int | None = None
         self.burner_start_at: float | None = None
+        self.command_seen_at: float | None = None
+        self.burner_launch_at: float | None = None
         self._stop = False
         self._sampler = self._build_sampler()
 
@@ -134,8 +136,9 @@ class Worker:
             return
 
         action = command.get("action")
+        seen_at = time.time()
         if action == "start":
-            self._start_burner(command, sequence)
+            self._start_burner(command, sequence, seen_at)
         elif action == "stop":
             self._stop_burner()
             self._finalize_samples()
@@ -148,9 +151,11 @@ class Worker:
         self.last_sequence = sequence
         self._write_state()
 
-    def _start_burner(self, command: dict[str, Any], sequence: int) -> None:
+    def _start_burner(self, command: dict[str, Any], sequence: int, seen_at: float | None = None) -> None:
         self._stop_burner()
         self._reset_samples()
+        self.command_seen_at = seen_at or time.time()
+        self.burner_launch_at = None
         start_at = parse_iso_epoch(command.get("start_at"))
         waveform_path = str(command.get("waveform_path") or "")
         duration = str(command.get("duration") or "")
@@ -180,6 +185,7 @@ class Worker:
         ]
         try:
             log_handle = log_path.open("w", encoding="utf-8")
+            launch_at = time.time()
             self.burner = subprocess.Popen(
                 command_line,
                 cwd=self.repo_root,
@@ -194,8 +200,10 @@ class Worker:
 
         self.burner_job_sequence = sequence
         self.burner_start_at = start_at
+        self.burner_launch_at = launch_at
         self.status = "arming" if time.time() < start_at else "burning"
         self.message = ""
+        self._write_arm_ack(sequence, start_at, self.command_seen_at, launch_at)
 
     def _stop_burner(self) -> None:
         if self.burner is None:
@@ -210,6 +218,7 @@ class Worker:
         self.burner = None
         self.burner_job_sequence = None
         self.burner_start_at = None
+        self.burner_launch_at = None
 
     def _poll_burner(self) -> None:
         if self.burner is None:
@@ -317,9 +326,31 @@ class Worker:
             "hw_info": self.hw_info,
             "burner_pid": self.burner.pid if self.burner is not None else None,
             "command_sequence": self.last_sequence,
+            "command_seen_at": iso_from_epoch(self.command_seen_at),
+            "burner_launch_at": iso_from_epoch(self.burner_launch_at),
+            "burner_start_at": iso_from_epoch(self.burner_start_at),
+            "seconds_until_start": (
+                round(self.burner_start_at - self.burner_launch_at, 6)
+                if self.burner_start_at is not None and self.burner_launch_at is not None
+                else None
+            ),
             "latest_power": self.latest_power,
         }
         atomic_write_json(self.node_path, payload)
+
+    def _write_arm_ack(self, sequence: int, start_at: float, seen_at: float, launch_at: float) -> None:
+        ack_path = self.session_dir / "acks" / str(sequence) / f"{self.node_id}.json"
+        payload = {
+            "node_id": self.node_id,
+            "hostname": self.hostname,
+            "sequence": sequence,
+            "status": self.status,
+            "command_seen_at": iso_from_epoch(seen_at),
+            "burner_launch_at": iso_from_epoch(launch_at),
+            "burner_start_at": iso_from_epoch(start_at),
+            "seconds_until_start": round(start_at - launch_at, 6),
+        }
+        atomic_write_json(ack_path, payload)
 
     def _build_sampler(self):
         sys.path.insert(0, str(self.repo_root))
@@ -578,6 +609,12 @@ def atomic_write_json(path: Path, payload: dict[str, object]) -> None:
 
 def iso_now() -> str:
     return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def iso_from_epoch(value: float | None) -> str | None:
+    if value is None:
+        return None
+    return datetime.fromtimestamp(value, UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def main() -> int:

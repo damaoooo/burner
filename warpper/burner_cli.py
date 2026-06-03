@@ -105,11 +105,20 @@ def _build_backends(args: argparse.Namespace):
 
 
 def _wait_until(start_time: datetime) -> None:
+    initial_remaining = (start_time - datetime.now(timezone.utc)).total_seconds()
+    if initial_remaining <= 0:
+        return
+    deadline = time.monotonic() + initial_remaining
     while True:
-        remaining = (start_time - datetime.now(timezone.utc)).total_seconds()
+        remaining = deadline - time.monotonic()
         if remaining <= 0:
             return
-        time.sleep(min(remaining, 1.0))
+        if remaining > 1.0:
+            time.sleep(min(remaining - 0.05, 1.0))
+        elif remaining > 0.05:
+            time.sleep(remaining - 0.02)
+        elif remaining > 0.002:
+            time.sleep(remaining / 2.0)
 
 
 def _prepare_backends(backends) -> None:

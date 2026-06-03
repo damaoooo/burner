@@ -37,6 +37,8 @@ UTC = timezone.utc
 DEFAULT_CONTROL_BASE = Path("/scratch/zhoul0e/burner-slurm-control")
 DEFAULT_CONDA_ENV = "burner"
 DEFAULT_START_LEAD_SECONDS = 2.0
+START_LEAD_SECONDS_PER_NODE = 0.0075
+MAX_START_LEAD_SECONDS = 30.0
 WORKER_STALE_SECONDS = 30.0
 NODE_CACHE_SECONDS = 5.0
 MAX_DETAILED_BURN_JOBS = 50
@@ -465,6 +467,7 @@ class SlurmController:
                 "tick_seconds": tick_seconds,
                 "waveform_path": str(waveform_path),
                 "waveform_name": waveform_name,
+                "start_lead_seconds": self._start_lead_seconds(session),
             },
         )
 
@@ -811,7 +814,13 @@ class SlurmController:
             raise BurnOverlapError("; ".join(conflicts))
 
     def _start_lead_seconds(self, session: SlurmSession) -> float:
-        return max(DEFAULT_START_LEAD_SECONDS, (session.poll_ms / 1000.0) * 5.0)
+        configured = _optional_positive_float(os.environ.get("BURNER_SLURM_START_LEAD_SECONDS"))
+        poll_lead = (session.poll_ms / 1000.0) * 5.0
+        node_lead = min(MAX_START_LEAD_SECONDS, session.nodes_requested * START_LEAD_SECONDS_PER_NODE)
+        automatic = max(DEFAULT_START_LEAD_SECONDS, poll_lead, node_lead)
+        if configured is None:
+            return automatic
+        return max(automatic, configured)
 
     async def _slurm_state(self, job_id: str) -> str:
         return await self._slurm.job_state(job_id)
@@ -897,6 +906,18 @@ def validate_node_count(value: int) -> int:
     if not isinstance(value, int) or value < 1:
         raise SlurmError("nodes must be a positive integer")
     return value
+
+
+def _optional_positive_float(value: str | None) -> float | None:
+    if value is None or value.strip() == "":
+        return None
+    try:
+        parsed = float(value)
+    except ValueError:
+        raise SlurmError("BURNER_SLURM_START_LEAD_SECONDS must be a positive number")
+    if parsed <= 0:
+        raise SlurmError("BURNER_SLURM_START_LEAD_SECONDS must be a positive number")
+    return parsed
 
 
 def _load_series_cache_key(

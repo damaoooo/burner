@@ -29,6 +29,7 @@ from slurm_worker import (  # noqa: E402
     estimate_cpu_watts,
     read_cpu_frequency_summary,
     detect_cpu_tdp_watts,
+    iso_from_epoch,
 )
 from warpper.watcher_core import PowerSample  # noqa: E402
 from waveform_store import WaveformStore  # noqa: E402
@@ -160,7 +161,50 @@ def test_start_requires_ready_barrier_and_writes_shared_command(tmp_path):
         assert command["waveform_name"] == "sine"
         assert command["duration"] == "10s"
         assert command["period"] == "1s"
+        assert command["start_lead_seconds"] >= 2.0
         assert len(jobs) == 2
+
+    asyncio.run(run_test())
+
+
+def test_large_allocation_uses_longer_start_lead(tmp_path):
+    async def run_test():
+        controller = SlurmController(
+            WaveformStore(custom_dir=tmp_path / "waveforms"),
+            broadcast=lambda payload: async_noop(payload),
+            control_base=tmp_path / "control",
+            repo_root=ROOT,
+            conda_env="burner",
+            slurm_client=FakeSlurmClient(),
+        )
+        await controller.submit_allocation(nodes=2000, time_limit="05:00:00", poll_ms=10)
+        session = controller._load_current_session()
+
+        assert session is not None
+        assert controller._start_lead_seconds(session) == 15.0
+
+    asyncio.run(run_test())
+
+
+def test_start_lead_env_can_only_increase_automatic_value(tmp_path, monkeypatch):
+    async def run_test():
+        controller = SlurmController(
+            WaveformStore(custom_dir=tmp_path / "waveforms"),
+            broadcast=lambda payload: async_noop(payload),
+            control_base=tmp_path / "control",
+            repo_root=ROOT,
+            conda_env="burner",
+            slurm_client=FakeSlurmClient(),
+        )
+        await controller.submit_allocation(nodes=2000, time_limit="05:00:00", poll_ms=10)
+        session = controller._load_current_session()
+        assert session is not None
+
+        monkeypatch.setenv("BURNER_SLURM_START_LEAD_SECONDS", "5")
+        assert controller._start_lead_seconds(session) == 15.0
+
+        monkeypatch.setenv("BURNER_SLURM_START_LEAD_SECONDS", "45")
+        assert controller._start_lead_seconds(session) == 45.0
 
     asyncio.run(run_test())
 
@@ -539,6 +583,36 @@ def test_worker_writes_burn_samples_to_local_tmp_until_finalize(tmp_path, monkey
     assert not worker.local_sample_path.exists()
     assert worker.sample_path.exists()
     assert "2026-05-19T00:00:00.000Z,,360.000000,50.000000" in worker.sample_path.read_text(encoding="utf-8")
+
+
+def test_worker_writes_arm_ack_with_launch_timing(tmp_path, monkeypatch):
+    monkeypatch.setenv("SLURMD_NODENAME", "nidtest")
+    monkeypatch.setattr(
+        slurm_worker,
+        "collect_hw_info",
+        lambda: {"cpu_count": 128, "cpu_tdp_total_watts": 720.0},
+    )
+    monkeypatch.setattr(slurm_worker, "read_cpu_times", lambda: (100, 200))
+    monkeypatch.setattr(Worker, "_build_sampler", lambda self: FakeSampler())
+    session_dir = tmp_path / "session"
+    worker = Worker(
+        session_dir=session_dir,
+        repo_root=ROOT,
+        poll_ms=10,
+        sample_ms=200,
+        local_sample_dir=tmp_path / "local",
+    )
+    worker._prepare_dirs()
+
+    worker._write_arm_ack(sequence=7, start_at=200.0, seen_at=100.0, launch_at=150.0)
+
+    ack = json.loads((session_dir / "acks" / "7" / "nidtest.json").read_text(encoding="utf-8"))
+    assert ack["node_id"] == "nidtest"
+    assert ack["sequence"] == 7
+    assert ack["command_seen_at"] == iso_from_epoch(100.0)
+    assert ack["burner_launch_at"] == iso_from_epoch(150.0)
+    assert ack["burner_start_at"] == iso_from_epoch(200.0)
+    assert ack["seconds_until_start"] == 50.0
 
 
 def write_node(session_dir: Path, node_id: str) -> None:
