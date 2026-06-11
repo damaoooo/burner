@@ -4,4 +4,6 @@ asyncssh
 python-multipart
 pydantic
 rich
+typer
+psutil
 pytest

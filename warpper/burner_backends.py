@@ -71,6 +71,12 @@ class LookbusyCpuBackend(BurnBackend):
     def prepare(self, intensity: float = 0.0) -> None:
         self._ensure_started(intensity)
 
+    @property
+    def process_pid(self) -> int | None:
+        if self._process is None or self._process.poll() is not None:
+            return None
+        return self._process.pid
+
     def stop(self) -> None:
         if self._process is not None and self._process.poll() is None:
             _terminate_process_group(self._process, timeout=2)

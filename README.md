@@ -4,6 +4,7 @@
 
 - `./burner`: burn CPU and/or GPU according to a periodic CSV curve.
 - `./watcher`: sample CPU/GPU power, draw a terminal TUI, and save CSV data.
+- `python -m choker`: run an idle CPU load daemon that yields to other apps.
 
 The Python control layer lives in `warpper/`. The directory name is intentionally kept as-is for now.
 
@@ -61,6 +62,14 @@ Watch real hardware power and save CSV:
 
 ```bash
 ./watcher -n 0.1 -f power.csv
+```
+
+Start choker so otherwise-idle CPUs are filled with low-priority burn:
+
+```bash
+python -m choker start --target 100 --window-ms 1000
+python -m choker status
+python -m choker stop
 ```
 
 ## burner Usage
@@ -134,6 +143,26 @@ CPU power is read from Linux RAPL under `/sys/class/powercap`. GPU power is read
 
 By default, `watcher` opens a Rich full-screen terminal view similar to `nvtop`: current CPU/GPU power at the top, scrolling multi-line CPU and GPU power curves in the main area, and CSV/status information at the bottom. Use Ctrl-C to exit cleanly.
 
+## choker Usage
+
+```bash
+python -m choker start [--strategy complement] [--target 100.0] [--window-ms 1000]
+python -m choker stop
+python -m choker status
+python -m choker run
+```
+
+`choker` is CPU-only in this version. It monitors aggregate CPU utilization
+across all logical CPUs on a normalized `0..100` scale. In the default
+`complement` strategy, it subtracts its own burn from total CPU usage and sets
+the existing `lookbusy` CPU backend to fill the remaining gap to `--target`.
+This keeps square and sine CPU waves closer to a high, steady total utilization.
+The older `idle` strategy is still available for strict 0/100 idle filling with
+`--threshold`.
+
+Runtime files default to `.runtime/choker.pid` and `.runtime/choker.log`. The
+full behavior contract is in `docs/choker.md`.
+
 ## Local Smoke Tests
 
 The following commands are useful before running longer burns:
@@ -145,6 +174,7 @@ bash scripts/build_gpu_burn.sh
 ./burner --cpu -f tests/fixtures/sine.csv -t 1s -p 1s --tick 0.25
 ./burner --gpu -f tests/fixtures/sine.csv -t 1s -p 1s --tick 0.25
 ./watcher --mock -n 0.1 -f /tmp/watcher-smoke.csv --samples 3 --no-tui
+python -m choker status
 ```
 
 `--tick`, `--samples`, and `--no-tui` are mainly for development and smoke testing.
@@ -165,4 +195,5 @@ More detail is available in:
 - `docs/requirements.md`
 - `docs/burner.md`
 - `docs/watcher.md`
+- `docs/choker.md`
 - `docs/third_party_changes.md`
