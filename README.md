@@ -5,6 +5,7 @@
 - `./burner`: burn CPU and/or GPU according to a periodic CSV curve.
 - `./watcher`: sample CPU/GPU power, draw a terminal TUI, and save CSV data.
 - `python -m choker`: run an idle CPU load daemon that yields to other apps.
+- WebUI Server Room Workload: run real CPU-heavy jobs across remote nodes.
 
 The Python control layer lives in `warpper/`. The directory name is intentionally kept as-is for now.
 
@@ -71,6 +72,10 @@ python -m choker start --target 100 --window-ms 1000
 python -m choker status
 python -m choker stop
 ```
+
+The WebUI also has a Server Room Workload panel for CPU-only, real-command
+multi-node simulation. Connect machines, run dependency setup, generate a
+scenario, then start it from the panel. Details are in `docs/workloads.md`.
 
 ## burner Usage
 
@@ -196,4 +201,5 @@ More detail is available in:
 - `docs/burner.md`
 - `docs/watcher.md`
 - `docs/choker.md`
+- `docs/workloads.md`
 - `docs/third_party_changes.md`

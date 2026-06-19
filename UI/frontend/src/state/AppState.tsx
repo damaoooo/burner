@@ -8,7 +8,11 @@ import type {
   Point,
   RunMode,
   SamplingBuildStatus,
-  WaveformInfo
+  WaveformInfo,
+  WorkloadJobInfo,
+  WorkloadScenario,
+  WorkloadScenarioSummary,
+  WorkloadSetupStatus
 } from "../types";
 
 export type Action =
@@ -45,6 +49,16 @@ export type Action =
   | { type: "samplingBuildFailedToStart"; message: string }
   | { type: "burnStarted"; job: JobInfo }
   | { type: "burnStopped"; jobId?: string; machineId?: string }
+  | { type: "setWorkloadScenarios"; scenarios: WorkloadScenarioSummary[] }
+  | { type: "setWorkloadScenario"; scenario: WorkloadScenario }
+  | { type: "startWorkloadSetup"; machineIds: string[] }
+  | { type: "appendWorkloadSetupLog"; machineId: string; line: string }
+  | { type: "setWorkloadSetupProgress"; machineId: string; status: WorkloadSetupStatus; step: string }
+  | { type: "setWorkloadSetupDone"; machineId: string; status: WorkloadSetupStatus; exitCode: number; message?: string }
+  | { type: "workloadSetupComplete"; exitCode: number; message?: string }
+  | { type: "workloadSetupFailedToStart"; message: string }
+  | { type: "workloadStarted"; job: WorkloadJobInfo }
+  | { type: "workloadStopped"; jobId?: string; machineId?: string }
   | { type: "clearUpdateLog"; machineId: string }
   | { type: "appendUpdateLog"; machineId: string; line: string }
   | { type: "setUpdateDone"; machineId: string; exitCode: number }
@@ -72,6 +86,14 @@ export const initialState: AppState = {
     machines: {}
   },
   burnJobs: {},
+  workloadScenarios: [],
+  workloadScenario: undefined,
+  workloadJobs: {},
+  workloadSetup: {
+    running: false,
+    targetMachineIds: [],
+    machines: {}
+  },
   updateLogs: {},
   updateStatus: {},
   wsConnected: false
@@ -349,6 +371,145 @@ export function reducer(state: AppState, action: Action): AppState {
         }
       }
       return { ...state, burnJobs: nextJobs };
+    }
+    case "setWorkloadScenarios":
+      return { ...state, workloadScenarios: action.scenarios };
+    case "setWorkloadScenario":
+      return { ...state, workloadScenario: action.scenario };
+    case "startWorkloadSetup":
+      return {
+        ...state,
+        workloadSetup: {
+          running: true,
+          targetMachineIds: action.machineIds,
+          exitCode: undefined,
+          message: undefined,
+          machines: Object.fromEntries(
+            action.machineIds.map((machineId) => [
+              machineId,
+              {
+                status: "queued",
+                step: "queued",
+                logs: []
+              }
+            ])
+          )
+        }
+      };
+    case "appendWorkloadSetupLog": {
+      const current = state.workloadSetup.machines[action.machineId] ?? {
+        status: "running" as const,
+        step: "running",
+        logs: []
+      };
+      return {
+        ...state,
+        workloadSetup: {
+          ...state.workloadSetup,
+          machines: {
+            ...state.workloadSetup.machines,
+            [action.machineId]: {
+              ...current,
+              logs: [...current.logs, action.line]
+            }
+          }
+        }
+      };
+    }
+    case "setWorkloadSetupProgress": {
+      const current = state.workloadSetup.machines[action.machineId] ?? {
+        status: action.status,
+        step: action.step,
+        logs: []
+      };
+      return {
+        ...state,
+        workloadSetup: {
+          ...state.workloadSetup,
+          running: true,
+          machines: {
+            ...state.workloadSetup.machines,
+            [action.machineId]: {
+              ...current,
+              status: action.status,
+              step: action.step
+            }
+          }
+        }
+      };
+    }
+    case "setWorkloadSetupDone": {
+      const current = state.workloadSetup.machines[action.machineId] ?? {
+        status: action.status,
+        step: action.status,
+        logs: []
+      };
+      return {
+        ...state,
+        workloadSetup: {
+          ...state.workloadSetup,
+          machines: {
+            ...state.workloadSetup.machines,
+            [action.machineId]: {
+              ...current,
+              status: action.status,
+              step: action.status,
+              exitCode: action.exitCode,
+              message: action.message
+            }
+          }
+        }
+      };
+    }
+    case "workloadSetupComplete":
+      return {
+        ...state,
+        workloadSetup: {
+          ...state.workloadSetup,
+          running: false,
+          exitCode: action.exitCode,
+          message: action.message
+        }
+      };
+    case "workloadSetupFailedToStart":
+      return {
+        ...state,
+        workloadSetup: {
+          running: false,
+          targetMachineIds: [],
+          exitCode: 1,
+          message: action.message,
+          machines: {
+            all: {
+              status: "failed",
+              step: "failed",
+              logs: [action.message],
+              exitCode: 1,
+              message: action.message
+            }
+          }
+        }
+      };
+    case "workloadStarted":
+      return {
+        ...state,
+        workloadJobs: {
+          ...state.workloadJobs,
+          [action.job.job_id]: action.job
+        }
+      };
+    case "workloadStopped": {
+      const nextJobs = { ...state.workloadJobs };
+      if (action.jobId) {
+        delete nextJobs[action.jobId];
+      } else if (action.machineId) {
+        for (const [jobId, job] of Object.entries(nextJobs)) {
+          if (job.machine_id === action.machineId) {
+            delete nextJobs[jobId];
+          }
+        }
+      }
+      return { ...state, workloadJobs: nextJobs };
     }
     case "clearUpdateLog":
       return {

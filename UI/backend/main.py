@@ -18,6 +18,11 @@ from sampling_controller import SamplingConflictError, SamplingController, Sampl
 from ssh_manager import SSHManager
 from update_controller import UpdateConflictError, UpdateController
 from waveform_store import WaveformError, WaveformExistsError, WaveformStore
+from workload_controller import (
+    WorkloadConflictError,
+    WorkloadController,
+    WorkloadError,
+)
 
 
 class WaveformCreate(BaseModel):
@@ -51,6 +56,30 @@ class BurnStopPayload(BaseModel):
 class SamplingApplyPayload(BaseModel):
     sampling_ms: int
     machine_ids: list[str] | None = None
+
+
+class WorkloadSetupPayload(BaseModel):
+    machine_ids: list[str] | None = None
+
+
+class WorkloadGeneratePayload(BaseModel):
+    name: str = "server-room"
+    machine_ids: list[str] | None = None
+    seed: int = 20260618
+    total_window_seconds: float = 1800.0
+    min_duration_seconds: float = 300.0
+    max_duration_seconds: float = 1200.0
+    min_workers: int = 1
+    max_workers: int = 4
+
+
+class WorkloadStartPayload(BaseModel):
+    scenario_name: str = "server-room"
+
+
+class WorkloadStopPayload(BaseModel):
+    machine_ids: list[str] | Literal["all"] | None = None
+    job_ids: list[str] | Literal["all"] | None = None
 
 
 class WebSocketHub:
@@ -136,6 +165,13 @@ sampling_controller = SamplingController(
     burn_controller,
     broadcast,
 )
+workload_controller = WorkloadController(
+    config_store,
+    ssh_manager,
+    file_transfer,
+    burn_controller,
+    broadcast,
+)
 
 
 async def on_machine_status(machine_id: str, status: str, message: str | None) -> None:
@@ -196,6 +232,7 @@ async def connect_machine(machine_id: str, background_tasks: BackgroundTasks):
 @app.post("/api/machines/{machine_id}/disconnect")
 async def disconnect_machine(machine_id: str):
     _require_machine(machine_id)
+    await workload_controller.stop_workloads(machine_ids=[machine_id])
     await burn_controller.stop_burn(machine_ids=[machine_id])
     await ssh_manager.disconnect(machine_id)
     hw_cache.pop(machine_id, None)
@@ -244,6 +281,9 @@ async def save_waveform(payload: WaveformCreate):
 async def start_burn(payload: BurnStartPayload):
     if sampling_controller.is_running():
         raise HTTPException(status_code=409, detail="Sampling rebuild is currently running")
+    for item in payload.machines:
+        if item.enabled and workload_controller.has_jobs(item.id):
+            raise HTTPException(status_code=409, detail=f"machine {item.id} is currently running workload")
     machines = [
         MachineBurnRequest(
             id=item.id,
@@ -294,6 +334,8 @@ async def update_machine(machine_id: str, background_tasks: BackgroundTasks):
         raise HTTPException(status_code=409, detail="Sampling rebuild is currently running")
     if burn_controller.has_jobs(machine_id):
         raise HTTPException(status_code=409, detail="Machine is currently burning")
+    if workload_controller.has_jobs(machine_id):
+        raise HTTPException(status_code=409, detail="Machine is currently running workload")
     has_gpu = bool((hw_cache.get(machine_id) or {}).get("gpus"))
     background_tasks.add_task(_run_update_task, machine_id, has_gpu)
     return {"status": "started"}
@@ -320,6 +362,8 @@ async def apply_sampling_time(payload: SamplingApplyPayload, background_tasks: B
     for machine_id in target_ids:
         if machine_id not in configured_ids:
             raise HTTPException(status_code=404, detail=f"unknown machine id: {machine_id}")
+        if workload_controller.has_jobs(machine_id):
+            raise HTTPException(status_code=409, detail=f"machine {machine_id} is currently running workload")
 
     try:
         await sampling_controller.reserve_apply(payload.sampling_ms, target_ids)
@@ -341,6 +385,93 @@ async def apply_sampling_time(payload: SamplingApplyPayload, background_tasks: B
     return {"status": "started", "machine_ids": target_ids}
 
 
+@app.get("/api/workload-scenarios")
+async def list_workload_scenarios():
+    try:
+        return workload_controller.list_scenarios()
+    except WorkloadError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/workload-scenarios/{name}")
+async def get_workload_scenario(name: str):
+    try:
+        return workload_controller.get_scenario(name).to_dict()
+    except WorkloadError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/workloads/setup")
+async def setup_workloads(payload: WorkloadSetupPayload, background_tasks: BackgroundTasks):
+    if sampling_controller.is_running():
+        raise HTTPException(status_code=409, detail="Sampling rebuild is currently running")
+    if update_controller.is_running():
+        raise HTTPException(status_code=409, detail="Update is currently running")
+    try:
+        machine_ids = await workload_controller.reserve_setup(payload.machine_ids)
+    except WorkloadConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except WorkloadError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    background_tasks.add_task(_run_workload_setup_task, machine_ids)
+    return {"status": "started", "machine_ids": machine_ids}
+
+
+@app.get("/api/workloads/setup/status")
+async def workload_setup_status():
+    return workload_controller.setup_status()
+
+
+@app.post("/api/workloads/generate")
+async def generate_workload_scenario(payload: WorkloadGeneratePayload):
+    try:
+        scenario = workload_controller.generate_scenario(
+            name=payload.name,
+            machine_ids=payload.machine_ids,
+            seed=payload.seed,
+            total_window_seconds=payload.total_window_seconds,
+            min_duration_seconds=payload.min_duration_seconds,
+            max_duration_seconds=payload.max_duration_seconds,
+            min_workers=payload.min_workers,
+            max_workers=payload.max_workers,
+        )
+    except WorkloadError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return scenario.to_dict()
+
+
+@app.post("/api/workloads/start")
+async def start_workloads(payload: WorkloadStartPayload):
+    if sampling_controller.is_running():
+        raise HTTPException(status_code=409, detail="Sampling rebuild is currently running")
+    if update_controller.is_running():
+        raise HTTPException(status_code=409, detail="Update is currently running")
+    try:
+        scenario = workload_controller.get_scenario(payload.scenario_name)
+        jobs = await workload_controller.start_scenario(scenario)
+    except WorkloadConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except WorkloadError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return [job.to_dict() for job in jobs]
+
+
+@app.post("/api/workloads/stop")
+async def stop_workloads(payload: WorkloadStopPayload):
+    await workload_controller.stop_workloads(
+        machine_ids=payload.machine_ids,
+        job_ids=payload.job_ids,
+    )
+    return {"status": "stopped"}
+
+
+@app.get("/api/workloads/status")
+async def workload_status():
+    return workload_controller.status()
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await hub.connect(websocket)
@@ -353,7 +484,7 @@ async def websocket_endpoint(websocket: WebSocket):
     finally:
         should_schedule_stop = await hub.disconnect(websocket)
         if should_schedule_stop:
-            hub.schedule_grace_stop(lambda: burn_controller.stop_burn(job_ids="all"))
+            hub.schedule_grace_stop(_stop_all_jobs)
 
 
 async def _connect_and_query(machine_id: str) -> None:
@@ -412,6 +543,27 @@ async def _run_sampling_task(
         )
 
 
+async def _run_workload_setup_task(machine_ids: list[str]) -> None:
+    try:
+        await workload_controller.run_reserved_setup(machine_ids)
+    except Exception as exc:
+        await broadcast({"event": "workload_setup_log", "id": "all", "line": f"workload setup failed: {exc}"})
+        await broadcast(
+            {
+                "event": "workload_setup_complete",
+                "exit_code": 1,
+                "message": str(exc),
+            }
+        )
+
+
+async def _stop_all_jobs() -> None:
+    await asyncio.gather(
+        burn_controller.stop_burn(job_ids="all"),
+        workload_controller.stop_workloads(job_ids="all"),
+    )
+
+
 async def _send_snapshot(websocket: WebSocket) -> None:
     for machine in config_store.list_machines():
         payload = {
@@ -442,6 +594,8 @@ async def _send_snapshot(websocket: WebSocket) -> None:
                 "sync_mode": job.sync_mode,
             }
         )
+    for job in workload_controller.job_registry.values():
+        await websocket.send_json({"event": "workload_started", **job.to_dict()})
     sampling_status = sampling_controller.status()
     if sampling_status["running"]:
         for item in sampling_status["machines"]:
@@ -455,6 +609,17 @@ async def _send_snapshot(websocket: WebSocket) -> None:
                     "completed": 0,
                     "total": 1,
                     "progress": item["progress"],
+                }
+            )
+    setup_status = workload_controller.setup_status()
+    if setup_status["running"]:
+        for item in setup_status["machines"]:
+            await websocket.send_json(
+                {
+                    "event": "workload_setup_progress",
+                    "id": item["id"],
+                    "step": item["step"],
+                    "status": item["status"],
                 }
             )
 
@@ -498,7 +663,7 @@ def _frontend_index() -> FileResponse:
 @app.on_event("shutdown")
 async def shutdown() -> None:
     with suppress(Exception):
-        await burn_controller.stop_burn(job_ids="all")
+        await _stop_all_jobs()
     for machine in config_store.list_machines():
         with suppress(Exception):
             await ssh_manager.disconnect(machine.id)

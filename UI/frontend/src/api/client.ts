@@ -5,6 +5,10 @@ import type {
   MachineApiRecord,
   Point,
   WaveformInfo,
+  WorkloadGenerateRequest,
+  WorkloadJobInfo,
+  WorkloadScenario,
+  WorkloadScenarioSummary,
   WsEvent
 } from "../types";
 
@@ -82,6 +86,39 @@ export async function stopJobs(jobIds: string[] | "all"): Promise<void> {
 
 export async function fetchBurnStatus(): Promise<JobInfo[]> {
   const { data } = await http.get<JobInfo[]>("/burn/status");
+  return data;
+}
+
+export async function fetchWorkloadScenarios(): Promise<WorkloadScenarioSummary[]> {
+  const { data } = await http.get<WorkloadScenarioSummary[]>("/workload-scenarios");
+  return data;
+}
+
+export async function fetchWorkloadScenario(name: string): Promise<WorkloadScenario> {
+  const { data } = await http.get<WorkloadScenario>(`/workload-scenarios/${encodeURIComponent(name)}`);
+  return data;
+}
+
+export async function generateWorkloadScenario(payload: WorkloadGenerateRequest): Promise<WorkloadScenario> {
+  const { data } = await http.post<WorkloadScenario>("/workloads/generate", payload);
+  return data;
+}
+
+export async function setupWorkloads(machineIds: string[]): Promise<void> {
+  await http.post("/workloads/setup", { machine_ids: machineIds });
+}
+
+export async function startWorkloads(scenarioName: string): Promise<WorkloadJobInfo[]> {
+  const { data } = await http.post<WorkloadJobInfo[]>("/workloads/start", { scenario_name: scenarioName });
+  return data;
+}
+
+export async function stopWorkloads(jobIds: string[] | "all"): Promise<void> {
+  await http.post("/workloads/stop", { job_ids: jobIds });
+}
+
+export async function fetchWorkloadStatus(): Promise<WorkloadJobInfo[]> {
+  const { data } = await http.get<WorkloadJobInfo[]>("/workloads/status");
   return data;
 }
 

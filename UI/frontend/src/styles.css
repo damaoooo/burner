@@ -1162,6 +1162,102 @@ button:disabled {
   color: var(--danger);
 }
 
+.workload-panel {
+  display: grid;
+  gap: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  background: color-mix(in srgb, var(--panel) 95%, transparent);
+  box-shadow: var(--shadow);
+}
+
+.workload-actions,
+.workload-command-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.workload-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.8fr) minmax(240px, 0.8fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.workload-config,
+.workload-summary {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.workload-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.compact-number {
+  display: grid;
+  gap: 5px;
+  color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.workload-summary {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--panel-strong);
+  color: var(--text-soft);
+  font-size: 13px;
+}
+
+.workload-summary strong {
+  color: var(--text);
+  font-size: 18px;
+}
+
+.workload-table {
+  display: grid;
+  gap: 6px;
+  overflow-x: auto;
+}
+
+.workload-row {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 0.8fr 0.8fr 0.7fr;
+  gap: 10px;
+  min-width: 620px;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--panel-strong);
+  color: var(--text-soft);
+  font-size: 13px;
+}
+
+.workload-row-head {
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.setup-row {
+  grid-template-columns: 1fr 0.7fr 0.8fr minmax(240px, 2fr);
+}
+
+.setup-table .workload-row-head {
+  grid-template-columns: 1fr 0.7fr 0.8fr minmax(240px, 2fr);
+}
+
 .toast-stack {
   position: fixed;
   right: 20px;
@@ -1233,6 +1329,11 @@ button:disabled {
   .header-actions,
   .header-controls,
   .control-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .workload-grid,
+  .workload-fields {
     grid-template-columns: 1fr;
   }
 

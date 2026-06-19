@@ -2,6 +2,8 @@ export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "er
 export type SyncMode = "immediate" | "delayed" | "scheduled";
 export type RunMode = "realtime" | "schedule";
 export type SamplingBuildStatus = "idle" | "queued" | "running" | "success" | "failed";
+export type WorkloadSetupStatus = "queued" | "running" | "success" | "failed";
+export type WorkloadType = "crypto" | "compress" | "compile" | "python-cpu";
 
 export interface Point {
   x: number;
@@ -72,6 +74,58 @@ export interface JobInfo {
   sync_mode?: SyncMode;
 }
 
+export interface WorkloadScenarioSummary {
+  name: string;
+  seed: number;
+  total_window_seconds: number;
+  jobs: number;
+}
+
+export interface WorkloadScenarioJob {
+  machine_id: string;
+  workload: WorkloadType;
+  delay_seconds: number;
+  duration_seconds: number;
+  workers: number;
+}
+
+export interface WorkloadScenario {
+  name: string;
+  seed: number;
+  total_window_seconds: number;
+  jobs: WorkloadScenarioJob[];
+}
+
+export interface WorkloadJobInfo {
+  job_id: string;
+  scenario_name: string;
+  machine_id: string;
+  pid: number;
+  started_at: number;
+  duration_seconds: number;
+  elapsed_seconds?: number;
+  delay_seconds: number;
+  workload: WorkloadType;
+  workers: number;
+  log_path: string;
+}
+
+export interface WorkloadSetupMachineState {
+  status: WorkloadSetupStatus;
+  step: string;
+  logs: string[];
+  exitCode?: number;
+  message?: string;
+}
+
+export interface WorkloadSetupState {
+  running: boolean;
+  targetMachineIds: string[];
+  machines: Record<string, WorkloadSetupMachineState>;
+  exitCode?: number;
+  message?: string;
+}
+
 export interface AppState {
   machines: Record<string, MachineState>;
   waveforms: WaveformInfo[];
@@ -88,6 +142,10 @@ export interface AppState {
   appliedSamplingMs: number;
   samplingBuild: SamplingBuildState;
   burnJobs: Record<string, JobInfo>;
+  workloadScenarios: WorkloadScenarioSummary[];
+  workloadScenario?: WorkloadScenario;
+  workloadJobs: Record<string, WorkloadJobInfo>;
+  workloadSetup: WorkloadSetupState;
   updateLogs: Record<string, string[]>;
   updateStatus: Record<string, "idle" | "running" | "success" | "failed">;
   wsConnected: boolean;
@@ -137,6 +195,36 @@ export type WsEvent =
       job_id?: string;
       id: string;
       exit_code: number;
+    }
+  | ({ event: "workload_started" } & WorkloadJobInfo)
+  | {
+      event: "workload_stopped";
+      job_id: string;
+      id: string;
+      exit_code: number;
+    }
+  | {
+      event: "workload_setup_log";
+      id: string;
+      line: string;
+    }
+  | {
+      event: "workload_setup_progress";
+      id: string;
+      step: string;
+      status: WorkloadSetupStatus;
+    }
+  | {
+      event: "workload_setup_done";
+      id: string;
+      status: WorkloadSetupStatus;
+      exit_code: number;
+      message?: string;
+    }
+  | {
+      event: "workload_setup_complete";
+      exit_code: number;
+      message?: string;
     }
   | {
       event: "update_log";
@@ -193,4 +281,15 @@ export interface BurnStartRequest {
     delay_seconds: number;
     waveform_name: string;
   }>;
+}
+
+export interface WorkloadGenerateRequest {
+  name: string;
+  machine_ids?: string[];
+  seed: number;
+  total_window_seconds: number;
+  min_duration_seconds: number;
+  max_duration_seconds: number;
+  min_workers: number;
+  max_workers: number;
 }

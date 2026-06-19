@@ -3,10 +3,13 @@ import BurnPanel from "./components/BurnPanel";
 import GlobalBurnBar from "./components/GlobalBurnBar";
 import MachineCard from "./components/MachineCard";
 import SchedulePanel from "./components/SchedulePanel";
+import ServerRoomWorkloadPanel from "./components/ServerRoomWorkloadPanel";
 import {
   extractErrorMessage,
   fetchBurnStatus,
   fetchMachines,
+  fetchWorkloadScenarios,
+  fetchWorkloadStatus,
   fetchWaveforms,
   openEventSocket
 } from "./api/client";
@@ -79,6 +82,49 @@ export default function App() {
       dispatch({ type: "burnStopped", jobId: event.job_id, machineId: event.id });
       return;
     }
+    if (event.event === "workload_started") {
+      dispatch({ type: "workloadStarted", job: event });
+      return;
+    }
+    if (event.event === "workload_stopped") {
+      dispatch({ type: "workloadStopped", jobId: event.job_id, machineId: event.id });
+      return;
+    }
+    if (event.event === "workload_setup_log") {
+      dispatch({ type: "appendWorkloadSetupLog", machineId: event.id, line: event.line });
+      return;
+    }
+    if (event.event === "workload_setup_progress") {
+      dispatch({
+        type: "setWorkloadSetupProgress",
+        machineId: event.id,
+        status: event.status,
+        step: event.step
+      });
+      return;
+    }
+    if (event.event === "workload_setup_done") {
+      dispatch({
+        type: "setWorkloadSetupDone",
+        machineId: event.id,
+        status: event.status,
+        exitCode: event.exit_code,
+        message: event.message
+      });
+      return;
+    }
+    if (event.event === "workload_setup_complete") {
+      dispatch({
+        type: "workloadSetupComplete",
+        exitCode: event.exit_code,
+        message: event.message
+      });
+      addToast(
+        event.exit_code === 0 ? "Workload dependencies are ready." : event.message || "Workload setup failed.",
+        event.exit_code === 0 ? "success" : "error"
+      );
+      return;
+    }
     if (event.event === "update_log") {
       dispatch({ type: "appendUpdateLog", machineId: event.id, line: event.line });
       return;
@@ -130,19 +176,25 @@ export default function App() {
   useEffect(() => {
     async function load() {
       try {
-        const [machines, waveforms, jobs] = await Promise.all([
+        const [machines, waveforms, jobs, workloadScenarios, workloadJobs] = await Promise.all([
           fetchMachines(),
           fetchWaveforms(),
-          fetchBurnStatus()
+          fetchBurnStatus(),
+          fetchWorkloadScenarios(),
+          fetchWorkloadStatus()
         ]);
         dispatch({ type: "setMachines", machines });
         dispatch({ type: "setWaveforms", waveforms });
+        dispatch({ type: "setWorkloadScenarios", scenarios: workloadScenarios });
         const preferred = waveforms.find((waveform) => waveform.name === "sine") ?? waveforms[0];
         if (preferred) {
           dispatch({ type: "setGlobalWaveform", points: preferred.points, name: preferred.name });
         }
         jobs.forEach((job) => {
           dispatch({ type: "burnStarted", job });
+        });
+        workloadJobs.forEach((job) => {
+          dispatch({ type: "workloadStarted", job });
         });
       } catch (error) {
         addToast(extractErrorMessage(error), "error");
@@ -175,6 +227,9 @@ export default function App() {
     (job) => job.started_at <= Date.now() / 1000 && Date.now() / 1000 < job.started_at + job.duration_seconds
   ).length;
   const scheduledJobs = Object.values(state.burnJobs).filter((job) => job.started_at > Date.now() / 1000).length;
+  const activeWorkloads = Object.values(state.workloadJobs).filter(
+    (job) => job.started_at <= Date.now() / 1000 && Date.now() / 1000 < job.started_at + job.duration_seconds
+  ).length;
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -231,10 +286,16 @@ export default function App() {
           <StatusTile label="Machines" value={machines.length} detail={`${selectedCount} enabled`} />
           <StatusTile label="Connected" value={connectedCount} detail={state.wsConnected ? "websocket live" : "reconnecting"} />
           <StatusTile label="GPU Inventory" value={gpuCount} detail="detected devices" />
-          <StatusTile label="Active Jobs" value={activeJobs} detail={scheduledJobs > 0 ? `${scheduledJobs} scheduled` : "idle"} />
+          <StatusTile
+            label="Active Jobs"
+            value={activeJobs + activeWorkloads}
+            detail={scheduledJobs > 0 ? `${scheduledJobs} burn scheduled` : `${activeWorkloads} workloads`}
+          />
         </section>
 
         <SchedulePanel onToast={addToast} />
+
+        <ServerRoomWorkloadPanel onToast={addToast} />
 
         <BurnPanel onToast={addToast} />
 
