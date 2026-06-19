@@ -6,6 +6,7 @@
 - `./watcher`: sample CPU/GPU power, draw a terminal TUI, and save CSV data.
 - `python -m choker`: run an idle CPU load daemon that yields to other apps.
 - WebUI Server Room Workload: run real CPU-heavy jobs across remote nodes.
+- Docker GPU Workload: run real single-GPU AI/video/search tasks in containers.
 
 The Python control layer lives in `warpper/`. The directory name is intentionally kept as-is for now.
 
@@ -76,6 +77,17 @@ python -m choker stop
 The WebUI also has a Server Room Workload panel for CPU-only, real-command
 multi-node simulation. Connect machines, run dependency setup, generate a
 scenario, then start it from the panel. Details are in `docs/workloads.md`.
+
+Build and run the Docker GPU workload image locally:
+
+```bash
+python -m gpu_workloads.cli build-image
+python -m gpu_workloads.cli run-local --scenario UI/gpu_scenarios/single-gpu-default.json --gpu 0
+python -m gpu_workloads.cli run-task gemm --duration 1m --gpu 0 --matrix-size 4096
+```
+
+The same scenario can run through the WebUI GPU Workload panel on one selected
+remote machine/GPU. Details are in `docs/gpu_workloads.md`.
 
 ## burner Usage
 
@@ -202,4 +214,5 @@ More detail is available in:
 - `docs/watcher.md`
 - `docs/choker.md`
 - `docs/workloads.md`
+- `docs/gpu_workloads.md`
 - `docs/third_party_changes.md`

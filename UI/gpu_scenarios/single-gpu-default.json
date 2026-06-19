@@ -1,0 +1,99 @@
+{
+  "name": "single-gpu-default",
+  "tasks": [
+    {
+      "workload": "gemm",
+      "duration_seconds": 60,
+      "batch_size": 1,
+      "precision": "fp16",
+      "params": {
+        "matrix_size": 4096
+      }
+    },
+    {
+      "workload": "memory-bandwidth",
+      "duration_seconds": 45,
+      "batch_size": 1,
+      "precision": "fp16",
+      "params": {
+        "elements": 67108864
+      }
+    },
+    {
+      "workload": "cv-train",
+      "duration_seconds": 60,
+      "model": "resnet18",
+      "batch_size": 64,
+      "input_shape": [3, 224, 224],
+      "precision": "fp16"
+    },
+    {
+      "workload": "cv-infer",
+      "duration_seconds": 45,
+      "model": "resnet50",
+      "batch_size": 64,
+      "input_shape": [3, 224, 224],
+      "precision": "fp16"
+    },
+    {
+      "workload": "llm-infer",
+      "duration_seconds": 60,
+      "model": "distilgpt2",
+      "batch_size": 4,
+      "precision": "fp16",
+      "params": {
+        "max_new_tokens": 32
+      }
+    },
+    {
+      "workload": "embedding-infer",
+      "duration_seconds": 45,
+      "model": "sentence-transformers/all-MiniLM-L6-v2",
+      "batch_size": 64,
+      "precision": "fp16"
+    },
+    {
+      "workload": "diffusion-infer",
+      "duration_seconds": 90,
+      "model": "stabilityai/sd-turbo",
+      "batch_size": 1,
+      "precision": "fp16",
+      "params": {
+        "steps": 2,
+        "height": 512,
+        "width": 512
+      }
+    },
+    {
+      "workload": "video-transcode",
+      "duration_seconds": 60,
+      "batch_size": 1,
+      "precision": "fp16",
+      "params": {
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "codec": "h264_nvenc",
+        "preset": "p4"
+      }
+    },
+    {
+      "workload": "video-analytics",
+      "duration_seconds": 45,
+      "model": "resnet18",
+      "batch_size": 32,
+      "input_shape": [3, 224, 224],
+      "precision": "fp16"
+    },
+    {
+      "workload": "faiss-search",
+      "duration_seconds": 45,
+      "batch_size": 128,
+      "precision": "fp32",
+      "params": {
+        "vectors": 200000,
+        "dimension": 768
+      }
+    }
+  ]
+}

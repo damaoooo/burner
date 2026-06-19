@@ -13,6 +13,12 @@ from pydantic import BaseModel
 from burn_controller import BurnController, BurnError, BurnOverlapError, MachineBurnRequest
 from config import ConfigError, ConfigStore, UI_ROOT
 from file_transfer import FileTransfer
+from gpu_workload_controller import (
+    DEFAULT_IMAGE as DEFAULT_GPU_WORKLOAD_IMAGE,
+    GpuWorkloadConflictError,
+    GpuWorkloadController,
+    GpuWorkloadError,
+)
 from machine_info import query_hw_info
 from sampling_controller import SamplingConflictError, SamplingController, SamplingError
 from ssh_manager import SSHManager
@@ -78,6 +84,25 @@ class WorkloadStartPayload(BaseModel):
 
 
 class WorkloadStopPayload(BaseModel):
+    machine_ids: list[str] | Literal["all"] | None = None
+    job_ids: list[str] | Literal["all"] | None = None
+
+
+class GpuWorkloadSetupPayload(BaseModel):
+    machine_id: str
+    gpu_index: int = 0
+    image: str = DEFAULT_GPU_WORKLOAD_IMAGE
+    no_cache: bool = False
+
+
+class GpuWorkloadStartPayload(BaseModel):
+    machine_id: str
+    scenario_name: str = "single-gpu-default"
+    gpu_index: int = 0
+    image: str = DEFAULT_GPU_WORKLOAD_IMAGE
+
+
+class GpuWorkloadStopPayload(BaseModel):
     machine_ids: list[str] | Literal["all"] | None = None
     job_ids: list[str] | Literal["all"] | None = None
 
@@ -172,6 +197,14 @@ workload_controller = WorkloadController(
     burn_controller,
     broadcast,
 )
+gpu_workload_controller = GpuWorkloadController(
+    config_store,
+    ssh_manager,
+    file_transfer,
+    burn_controller,
+    workload_controller,
+    broadcast,
+)
 
 
 async def on_machine_status(machine_id: str, status: str, message: str | None) -> None:
@@ -232,6 +265,7 @@ async def connect_machine(machine_id: str, background_tasks: BackgroundTasks):
 @app.post("/api/machines/{machine_id}/disconnect")
 async def disconnect_machine(machine_id: str):
     _require_machine(machine_id)
+    await gpu_workload_controller.stop(machine_ids=[machine_id])
     await workload_controller.stop_workloads(machine_ids=[machine_id])
     await burn_controller.stop_burn(machine_ids=[machine_id])
     await ssh_manager.disconnect(machine_id)
@@ -284,6 +318,8 @@ async def start_burn(payload: BurnStartPayload):
     for item in payload.machines:
         if item.enabled and workload_controller.has_jobs(item.id):
             raise HTTPException(status_code=409, detail=f"machine {item.id} is currently running workload")
+        if item.enabled and gpu_workload_controller.has_jobs(item.id):
+            raise HTTPException(status_code=409, detail=f"machine {item.id} is currently running GPU workload")
     machines = [
         MachineBurnRequest(
             id=item.id,
@@ -336,6 +372,8 @@ async def update_machine(machine_id: str, background_tasks: BackgroundTasks):
         raise HTTPException(status_code=409, detail="Machine is currently burning")
     if workload_controller.has_jobs(machine_id):
         raise HTTPException(status_code=409, detail="Machine is currently running workload")
+    if gpu_workload_controller.has_jobs(machine_id):
+        raise HTTPException(status_code=409, detail="Machine is currently running GPU workload")
     has_gpu = bool((hw_cache.get(machine_id) or {}).get("gpus"))
     background_tasks.add_task(_run_update_task, machine_id, has_gpu)
     return {"status": "started"}
@@ -364,6 +402,8 @@ async def apply_sampling_time(payload: SamplingApplyPayload, background_tasks: B
             raise HTTPException(status_code=404, detail=f"unknown machine id: {machine_id}")
         if workload_controller.has_jobs(machine_id):
             raise HTTPException(status_code=409, detail=f"machine {machine_id} is currently running workload")
+        if gpu_workload_controller.has_jobs(machine_id):
+            raise HTTPException(status_code=409, detail=f"machine {machine_id} is currently running GPU workload")
 
     try:
         await sampling_controller.reserve_apply(payload.sampling_ms, target_ids)
@@ -407,14 +447,110 @@ async def setup_workloads(payload: WorkloadSetupPayload, background_tasks: Backg
         raise HTTPException(status_code=409, detail="Sampling rebuild is currently running")
     if update_controller.is_running():
         raise HTTPException(status_code=409, detail="Update is currently running")
+    target_ids = payload.machine_ids
+    if target_ids is None:
+        target_ids = [
+            machine.id
+            for machine in config_store.list_machines()
+            if ssh_manager.status_for(machine.id) == "connected"
+        ]
+    for machine_id in target_ids:
+        if gpu_workload_controller.has_jobs(machine_id):
+            raise HTTPException(status_code=409, detail=f"machine {machine_id} is currently running GPU workload")
     try:
-        machine_ids = await workload_controller.reserve_setup(payload.machine_ids)
+        machine_ids = await workload_controller.reserve_setup(target_ids)
     except WorkloadConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except WorkloadError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     background_tasks.add_task(_run_workload_setup_task, machine_ids)
     return {"status": "started", "machine_ids": machine_ids}
+
+
+@app.get("/api/gpu-workload-scenarios")
+async def list_gpu_workload_scenarios():
+    try:
+        return gpu_workload_controller.list_scenarios()
+    except GpuWorkloadError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/gpu-workload-scenarios/{name}")
+async def get_gpu_workload_scenario(name: str):
+    try:
+        return gpu_workload_controller.get_scenario(name).to_dict()
+    except GpuWorkloadError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/gpu-workloads/setup")
+async def setup_gpu_workload(payload: GpuWorkloadSetupPayload, background_tasks: BackgroundTasks):
+    _require_machine(payload.machine_id)
+    if sampling_controller.is_running():
+        raise HTTPException(status_code=409, detail="Sampling rebuild is currently running")
+    if update_controller.is_running():
+        raise HTTPException(status_code=409, detail="Update is currently running")
+    try:
+        await gpu_workload_controller.reserve_setup(
+            payload.machine_id,
+            payload.gpu_index,
+            payload.image,
+            payload.no_cache,
+        )
+    except GpuWorkloadConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except GpuWorkloadError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    background_tasks.add_task(
+        _run_gpu_workload_setup_task,
+        payload.machine_id,
+        payload.gpu_index,
+        payload.image,
+        payload.no_cache,
+    )
+    return {"status": "started", "machine_id": payload.machine_id}
+
+
+@app.get("/api/gpu-workloads/setup/status")
+async def gpu_workload_setup_status():
+    return gpu_workload_controller.setup_status()
+
+
+@app.post("/api/gpu-workloads/start")
+async def start_gpu_workload(payload: GpuWorkloadStartPayload):
+    _require_machine(payload.machine_id)
+    if sampling_controller.is_running():
+        raise HTTPException(status_code=409, detail="Sampling rebuild is currently running")
+    if update_controller.is_running():
+        raise HTTPException(status_code=409, detail="Update is currently running")
+    try:
+        job = await gpu_workload_controller.start(
+            payload.machine_id,
+            payload.scenario_name,
+            payload.gpu_index,
+            payload.image,
+        )
+    except GpuWorkloadConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except GpuWorkloadError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return job.to_dict()
+
+
+@app.post("/api/gpu-workloads/stop")
+async def stop_gpu_workloads(payload: GpuWorkloadStopPayload):
+    await gpu_workload_controller.stop(
+        machine_ids=payload.machine_ids,
+        job_ids=payload.job_ids,
+    )
+    return {"status": "stopped"}
+
+
+@app.get("/api/gpu-workloads/status")
+async def gpu_workload_status():
+    return gpu_workload_controller.status()
 
 
 @app.get("/api/workloads/setup/status")
@@ -448,6 +584,9 @@ async def start_workloads(payload: WorkloadStartPayload):
         raise HTTPException(status_code=409, detail="Update is currently running")
     try:
         scenario = workload_controller.get_scenario(payload.scenario_name)
+        for job in scenario.jobs:
+            if gpu_workload_controller.has_jobs(job.machine_id):
+                raise WorkloadConflictError(f"machine {job.machine_id} is currently running GPU workload")
         jobs = await workload_controller.start_scenario(scenario)
     except WorkloadConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -557,10 +696,35 @@ async def _run_workload_setup_task(machine_ids: list[str]) -> None:
         )
 
 
+async def _run_gpu_workload_setup_task(
+    machine_id: str,
+    gpu_index: int,
+    image: str,
+    no_cache: bool,
+) -> None:
+    try:
+        await gpu_workload_controller.run_reserved_setup(
+            machine_id,
+            gpu_index,
+            image,
+            no_cache,
+        )
+    except Exception as exc:
+        await broadcast({"event": "gpu_workload_setup_log", "id": machine_id, "line": f"GPU workload setup failed: {exc}"})
+        await broadcast(
+            {
+                "event": "gpu_workload_setup_complete",
+                "exit_code": 1,
+                "message": str(exc),
+            }
+        )
+
+
 async def _stop_all_jobs() -> None:
     await asyncio.gather(
         burn_controller.stop_burn(job_ids="all"),
         workload_controller.stop_workloads(job_ids="all"),
+        gpu_workload_controller.stop(job_ids="all"),
     )
 
 
@@ -596,6 +760,8 @@ async def _send_snapshot(websocket: WebSocket) -> None:
         )
     for job in workload_controller.job_registry.values():
         await websocket.send_json({"event": "workload_started", **job.to_dict()})
+    for job in gpu_workload_controller.job_registry.values():
+        await websocket.send_json({"event": "gpu_workload_started", **job.to_dict()})
     sampling_status = sampling_controller.status()
     if sampling_status["running"]:
         for item in sampling_status["machines"]:
@@ -617,6 +783,17 @@ async def _send_snapshot(websocket: WebSocket) -> None:
             await websocket.send_json(
                 {
                     "event": "workload_setup_progress",
+                    "id": item["id"],
+                    "step": item["step"],
+                    "status": item["status"],
+                }
+            )
+    gpu_setup_status = gpu_workload_controller.setup_status()
+    if gpu_setup_status["running"]:
+        for item in gpu_setup_status["machines"]:
+            await websocket.send_json(
+                {
+                    "event": "gpu_workload_setup_progress",
                     "id": item["id"],
                     "step": item["step"],
                     "status": item["status"],

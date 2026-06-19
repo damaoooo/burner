@@ -1,6 +1,11 @@
 import axios from "axios";
 import type {
   BurnStartRequest,
+  GpuWorkloadJobInfo,
+  GpuWorkloadScenario,
+  GpuWorkloadScenarioSummary,
+  GpuWorkloadSetupRequest,
+  GpuWorkloadStartRequest,
   JobInfo,
   MachineApiRecord,
   Point,
@@ -119,6 +124,34 @@ export async function stopWorkloads(jobIds: string[] | "all"): Promise<void> {
 
 export async function fetchWorkloadStatus(): Promise<WorkloadJobInfo[]> {
   const { data } = await http.get<WorkloadJobInfo[]>("/workloads/status");
+  return data;
+}
+
+export async function fetchGpuWorkloadScenarios(): Promise<GpuWorkloadScenarioSummary[]> {
+  const { data } = await http.get<GpuWorkloadScenarioSummary[]>("/gpu-workload-scenarios");
+  return data;
+}
+
+export async function fetchGpuWorkloadScenario(name: string): Promise<GpuWorkloadScenario> {
+  const { data } = await http.get<GpuWorkloadScenario>(`/gpu-workload-scenarios/${encodeURIComponent(name)}`);
+  return data;
+}
+
+export async function setupGpuWorkload(payload: GpuWorkloadSetupRequest): Promise<void> {
+  await http.post("/gpu-workloads/setup", payload);
+}
+
+export async function startGpuWorkload(payload: GpuWorkloadStartRequest): Promise<GpuWorkloadJobInfo> {
+  const { data } = await http.post<GpuWorkloadJobInfo>("/gpu-workloads/start", payload);
+  return data;
+}
+
+export async function stopGpuWorkloads(jobIds: string[] | "all"): Promise<void> {
+  await http.post("/gpu-workloads/stop", { job_ids: jobIds });
+}
+
+export async function fetchGpuWorkloadStatus(): Promise<GpuWorkloadJobInfo[]> {
+  const { data } = await http.get<GpuWorkloadJobInfo[]>("/gpu-workloads/status");
   return data;
 }
 
