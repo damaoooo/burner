@@ -1438,6 +1438,13 @@ button:disabled {
   justify-content: flex-end;
 }
 
+/* Below this width the burn bar no longer fits beside the header controls. */
+@media (max-width: 1320px) {
+  .header-actions {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 900px) {
   .app-header,
   .header-actions,
