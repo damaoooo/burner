@@ -4,6 +4,17 @@ export type RunMode = "realtime" | "schedule";
 export type SamplingBuildStatus = "idle" | "queued" | "running" | "success" | "failed";
 export type WorkloadSetupStatus = "queued" | "running" | "success" | "failed";
 export type WorkloadType = "crypto" | "compress" | "compile" | "python-cpu";
+export type GpuWorkloadType =
+  | "gemm"
+  | "memory-bandwidth"
+  | "cv-train"
+  | "cv-infer"
+  | "llm-infer"
+  | "embedding-infer"
+  | "diffusion-infer"
+  | "video-transcode"
+  | "video-analytics"
+  | "faiss-search";
 
 export interface Point {
   x: number;
@@ -140,6 +151,50 @@ export interface WorkloadSetupState {
   message?: string;
 }
 
+export interface GpuWorkloadScenarioSummary {
+  name: string;
+  tasks: number;
+  total_duration_seconds: number;
+}
+
+export interface GpuWorkloadTask {
+  workload: GpuWorkloadType;
+  duration_seconds: number;
+  model?: string;
+  batch_size: number;
+  input_shape: number[];
+  precision: "fp16" | "fp32" | "bf16";
+  params: Record<string, unknown>;
+}
+
+export interface GpuWorkloadScenario {
+  name: string;
+  total_duration_seconds: number;
+  tasks: GpuWorkloadTask[];
+}
+
+export interface GpuWorkloadJobInfo {
+  job_id: string;
+  machine_id: string;
+  scenario_name: string;
+  pid: number;
+  container_name: string;
+  image: string;
+  gpu_index: number;
+  started_at: number;
+  duration_seconds: number;
+  elapsed_seconds?: number;
+  log_path: string;
+}
+
+export interface GpuWorkloadSetupState {
+  running: boolean;
+  targetMachineId?: string;
+  machines: Record<string, WorkloadSetupMachineState>;
+  exitCode?: number;
+  message?: string;
+}
+
 export interface AppState {
   machines: Record<string, MachineState>;
   waveforms: WaveformInfo[];
@@ -160,6 +215,10 @@ export interface AppState {
   workloadScenario?: WorkloadScenario;
   workloadJobs: Record<string, WorkloadJobInfo>;
   workloadSetup: WorkloadSetupState;
+  gpuWorkloadScenarios: GpuWorkloadScenarioSummary[];
+  gpuWorkloadScenario?: GpuWorkloadScenario;
+  gpuWorkloadJobs: Record<string, GpuWorkloadJobInfo>;
+  gpuWorkloadSetup: GpuWorkloadSetupState;
   updateLogs: Record<string, string[]>;
   updateStatus: Record<string, "idle" | "running" | "success" | "failed">;
   wsConnected: boolean;
@@ -240,6 +299,36 @@ export type WsEvent =
       exit_code: number;
       message?: string;
     }
+  | ({ event: "gpu_workload_started" } & GpuWorkloadJobInfo)
+  | {
+      event: "gpu_workload_stopped";
+      job_id: string;
+      id: string;
+      exit_code: number;
+    }
+  | {
+      event: "gpu_workload_setup_log";
+      id: string;
+      line: string;
+    }
+  | {
+      event: "gpu_workload_setup_progress";
+      id: string;
+      step: string;
+      status: WorkloadSetupStatus;
+    }
+  | {
+      event: "gpu_workload_setup_done";
+      id: string;
+      status: WorkloadSetupStatus;
+      exit_code: number;
+      message?: string;
+    }
+  | {
+      event: "gpu_workload_setup_complete";
+      exit_code: number;
+      message?: string;
+    }
   | {
       event: "update_log";
       id: string;
@@ -306,4 +395,18 @@ export interface WorkloadGenerateRequest {
   max_duration_seconds: number;
   min_workers: number;
   max_workers: number;
+}
+
+export interface GpuWorkloadSetupRequest {
+  machine_id: string;
+  gpu_index: number;
+  image: string;
+  no_cache: boolean;
+}
+
+export interface GpuWorkloadStartRequest {
+  machine_id: string;
+  scenario_name: string;
+  gpu_index: number;
+  image: string;
 }

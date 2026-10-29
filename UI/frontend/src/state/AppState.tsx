@@ -2,6 +2,9 @@ import { createContext, useContext, type Dispatch } from "react";
 import type {
   AppState,
   ConnectionStatus,
+  GpuWorkloadJobInfo,
+  GpuWorkloadScenario,
+  GpuWorkloadScenarioSummary,
   HwInfo,
   JobInfo,
   MachineApiRecord,
@@ -59,6 +62,16 @@ export type Action =
   | { type: "workloadSetupFailedToStart"; message: string }
   | { type: "workloadStarted"; job: WorkloadJobInfo }
   | { type: "workloadStopped"; jobId?: string; machineId?: string }
+  | { type: "setGpuWorkloadScenarios"; scenarios: GpuWorkloadScenarioSummary[] }
+  | { type: "setGpuWorkloadScenario"; scenario: GpuWorkloadScenario }
+  | { type: "startGpuWorkloadSetup"; machineId: string }
+  | { type: "appendGpuWorkloadSetupLog"; machineId: string; line: string }
+  | { type: "setGpuWorkloadSetupProgress"; machineId: string; status: WorkloadSetupStatus; step: string }
+  | { type: "setGpuWorkloadSetupDone"; machineId: string; status: WorkloadSetupStatus; exitCode: number; message?: string }
+  | { type: "gpuWorkloadSetupComplete"; exitCode: number; message?: string }
+  | { type: "gpuWorkloadSetupFailedToStart"; message: string }
+  | { type: "gpuWorkloadStarted"; job: GpuWorkloadJobInfo }
+  | { type: "gpuWorkloadStopped"; jobId?: string; machineId?: string }
   | { type: "clearUpdateLog"; machineId: string }
   | { type: "appendUpdateLog"; machineId: string; line: string }
   | { type: "setUpdateDone"; machineId: string; exitCode: number }
@@ -92,6 +105,14 @@ export const initialState: AppState = {
   workloadSetup: {
     running: false,
     targetMachineIds: [],
+    machines: {}
+  },
+  gpuWorkloadScenarios: [],
+  gpuWorkloadScenario: undefined,
+  gpuWorkloadJobs: {},
+  gpuWorkloadSetup: {
+    running: false,
+    targetMachineId: undefined,
     machines: {}
   },
   updateLogs: {},
@@ -510,6 +531,143 @@ export function reducer(state: AppState, action: Action): AppState {
         }
       }
       return { ...state, workloadJobs: nextJobs };
+    }
+    case "setGpuWorkloadScenarios":
+      return { ...state, gpuWorkloadScenarios: action.scenarios };
+    case "setGpuWorkloadScenario":
+      return { ...state, gpuWorkloadScenario: action.scenario };
+    case "startGpuWorkloadSetup":
+      return {
+        ...state,
+        gpuWorkloadSetup: {
+          running: true,
+          targetMachineId: action.machineId,
+          exitCode: undefined,
+          message: undefined,
+          machines: {
+            [action.machineId]: {
+              status: "queued",
+              step: "queued",
+              logs: []
+            }
+          }
+        }
+      };
+    case "appendGpuWorkloadSetupLog": {
+      const current = state.gpuWorkloadSetup.machines[action.machineId] ?? {
+        status: "running" as const,
+        step: "running",
+        logs: []
+      };
+      return {
+        ...state,
+        gpuWorkloadSetup: {
+          ...state.gpuWorkloadSetup,
+          machines: {
+            ...state.gpuWorkloadSetup.machines,
+            [action.machineId]: {
+              ...current,
+              logs: [...current.logs, action.line]
+            }
+          }
+        }
+      };
+    }
+    case "setGpuWorkloadSetupProgress": {
+      const current = state.gpuWorkloadSetup.machines[action.machineId] ?? {
+        status: action.status,
+        step: action.step,
+        logs: []
+      };
+      return {
+        ...state,
+        gpuWorkloadSetup: {
+          ...state.gpuWorkloadSetup,
+          running: true,
+          targetMachineId: action.machineId,
+          machines: {
+            ...state.gpuWorkloadSetup.machines,
+            [action.machineId]: {
+              ...current,
+              status: action.status,
+              step: action.step
+            }
+          }
+        }
+      };
+    }
+    case "setGpuWorkloadSetupDone": {
+      const current = state.gpuWorkloadSetup.machines[action.machineId] ?? {
+        status: action.status,
+        step: action.status,
+        logs: []
+      };
+      return {
+        ...state,
+        gpuWorkloadSetup: {
+          ...state.gpuWorkloadSetup,
+          machines: {
+            ...state.gpuWorkloadSetup.machines,
+            [action.machineId]: {
+              ...current,
+              status: action.status,
+              step: action.status,
+              exitCode: action.exitCode,
+              message: action.message
+            }
+          }
+        }
+      };
+    }
+    case "gpuWorkloadSetupComplete":
+      return {
+        ...state,
+        gpuWorkloadSetup: {
+          ...state.gpuWorkloadSetup,
+          running: false,
+          exitCode: action.exitCode,
+          message: action.message
+        }
+      };
+    case "gpuWorkloadSetupFailedToStart":
+      return {
+        ...state,
+        gpuWorkloadSetup: {
+          running: false,
+          targetMachineId: undefined,
+          exitCode: 1,
+          message: action.message,
+          machines: {
+            all: {
+              status: "failed",
+              step: "failed",
+              logs: [action.message],
+              exitCode: 1,
+              message: action.message
+            }
+          }
+        }
+      };
+    case "gpuWorkloadStarted":
+      return {
+        ...state,
+        gpuWorkloadJobs: {
+          ...state.gpuWorkloadJobs,
+          [action.job.job_id]: action.job
+        }
+      };
+    case "gpuWorkloadStopped": {
+      const nextJobs = { ...state.gpuWorkloadJobs };
+      if (action.jobId) {
+        delete nextJobs[action.jobId];
+      } else if (action.machineId) {
+        for (const [jobId, job] of Object.entries(nextJobs)) {
+          if (job.machine_id === action.machineId) {
+            delete nextJobs[jobId];
+          }
+        }
+      }
+      return { ...state, gpuWorkloadJobs: nextJobs };
     }
     case "clearUpdateLog":
       return {

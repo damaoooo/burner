@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import BurnPanel from "./components/BurnPanel";
+import GpuWorkloadPanel from "./components/GpuWorkloadPanel";
 import GlobalBurnBar from "./components/GlobalBurnBar";
 import MachineCard from "./components/MachineCard";
 import SchedulePanel from "./components/SchedulePanel";
@@ -7,6 +8,8 @@ import ServerRoomWorkloadPanel from "./components/ServerRoomWorkloadPanel";
 import {
   extractErrorMessage,
   fetchBurnStatus,
+  fetchGpuWorkloadScenarios,
+  fetchGpuWorkloadStatus,
   fetchMachines,
   fetchWorkloadScenarios,
   fetchWorkloadStatus,
@@ -125,6 +128,49 @@ export default function App() {
       );
       return;
     }
+    if (event.event === "gpu_workload_started") {
+      dispatch({ type: "gpuWorkloadStarted", job: event });
+      return;
+    }
+    if (event.event === "gpu_workload_stopped") {
+      dispatch({ type: "gpuWorkloadStopped", jobId: event.job_id, machineId: event.id });
+      return;
+    }
+    if (event.event === "gpu_workload_setup_log") {
+      dispatch({ type: "appendGpuWorkloadSetupLog", machineId: event.id, line: event.line });
+      return;
+    }
+    if (event.event === "gpu_workload_setup_progress") {
+      dispatch({
+        type: "setGpuWorkloadSetupProgress",
+        machineId: event.id,
+        status: event.status,
+        step: event.step
+      });
+      return;
+    }
+    if (event.event === "gpu_workload_setup_done") {
+      dispatch({
+        type: "setGpuWorkloadSetupDone",
+        machineId: event.id,
+        status: event.status,
+        exitCode: event.exit_code,
+        message: event.message
+      });
+      return;
+    }
+    if (event.event === "gpu_workload_setup_complete") {
+      dispatch({
+        type: "gpuWorkloadSetupComplete",
+        exitCode: event.exit_code,
+        message: event.message
+      });
+      addToast(
+        event.exit_code === 0 ? "GPU workload image is ready." : event.message || "GPU workload setup failed.",
+        event.exit_code === 0 ? "success" : "error"
+      );
+      return;
+    }
     if (event.event === "update_log") {
       dispatch({ type: "appendUpdateLog", machineId: event.id, line: event.line });
       return;
@@ -176,16 +222,27 @@ export default function App() {
   useEffect(() => {
     async function load() {
       try {
-        const [machines, waveforms, jobs, workloadScenarios, workloadJobs] = await Promise.all([
+        const [
+          machines,
+          waveforms,
+          jobs,
+          workloadScenarios,
+          workloadJobs,
+          gpuWorkloadScenarios,
+          gpuWorkloadJobs
+        ] = await Promise.all([
           fetchMachines(),
           fetchWaveforms(),
           fetchBurnStatus(),
           fetchWorkloadScenarios(),
-          fetchWorkloadStatus()
+          fetchWorkloadStatus(),
+          fetchGpuWorkloadScenarios(),
+          fetchGpuWorkloadStatus()
         ]);
         dispatch({ type: "setMachines", machines });
         dispatch({ type: "setWaveforms", waveforms });
         dispatch({ type: "setWorkloadScenarios", scenarios: workloadScenarios });
+        dispatch({ type: "setGpuWorkloadScenarios", scenarios: gpuWorkloadScenarios });
         const preferred = waveforms.find((waveform) => waveform.name === "sine") ?? waveforms[0];
         if (preferred) {
           dispatch({ type: "setGlobalWaveform", points: preferred.points, name: preferred.name });
@@ -195,6 +252,9 @@ export default function App() {
         });
         workloadJobs.forEach((job) => {
           dispatch({ type: "workloadStarted", job });
+        });
+        gpuWorkloadJobs.forEach((job) => {
+          dispatch({ type: "gpuWorkloadStarted", job });
         });
       } catch (error) {
         addToast(extractErrorMessage(error), "error");
@@ -228,6 +288,9 @@ export default function App() {
   ).length;
   const scheduledJobs = Object.values(state.burnJobs).filter((job) => job.started_at > Date.now() / 1000).length;
   const activeWorkloads = Object.values(state.workloadJobs).filter(
+    (job) => job.started_at <= Date.now() / 1000 && Date.now() / 1000 < job.started_at + job.duration_seconds
+  ).length;
+  const activeGpuWorkloads = Object.values(state.gpuWorkloadJobs).filter(
     (job) => job.started_at <= Date.now() / 1000 && Date.now() / 1000 < job.started_at + job.duration_seconds
   ).length;
 
@@ -288,14 +351,16 @@ export default function App() {
           <StatusTile label="GPU Inventory" value={gpuCount} detail="detected devices" />
           <StatusTile
             label="Active Jobs"
-            value={activeJobs + activeWorkloads}
-            detail={scheduledJobs > 0 ? `${scheduledJobs} burn scheduled` : `${activeWorkloads} workloads`}
+            value={activeJobs + activeWorkloads + activeGpuWorkloads}
+            detail={scheduledJobs > 0 ? `${scheduledJobs} burn scheduled` : `${activeWorkloads + activeGpuWorkloads} workloads`}
           />
         </section>
 
         <SchedulePanel onToast={addToast} />
 
         <ServerRoomWorkloadPanel onToast={addToast} />
+
+        <GpuWorkloadPanel onToast={addToast} />
 
         <BurnPanel onToast={addToast} />
 
