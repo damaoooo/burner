@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Iterable
 
 from config import REPO_ROOT, UI_ROOT
+from profile_library import PROFILES_DIR, ProfileError, load_index
 
 
 CUSTOM_DIR = UI_ROOT / "waveforms"
@@ -27,25 +28,41 @@ class WaveformRecord:
     name: str
     source: str
     points: list[tuple[float, float]]
+    period_seconds: float | None = None
+    group: str | None = None
+    # Profiles hold thousands of points; the API sends this downsampled copy.
+    preview: list[tuple[float, float]] | None = None
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        record: dict[str, object] = {
             "name": self.name,
             "source": self.source,
-            "points": self.points,
+            "points": self.preview if self.preview is not None else self.points,
         }
+        if self.period_seconds is not None:
+            record["period_seconds"] = self.period_seconds
+        if self.group is not None:
+            record["group"] = self.group
+        return record
 
 
 class WaveformStore:
-    def __init__(self, custom_dir: Path = CUSTOM_DIR, fixtures_dir: Path = FIXTURES_DIR):
+    def __init__(
+        self,
+        custom_dir: Path = CUSTOM_DIR,
+        fixtures_dir: Path = FIXTURES_DIR,
+        profiles_dir: Path = PROFILES_DIR,
+    ):
         self.custom_dir = custom_dir
         self.fixtures_dir = fixtures_dir
+        self.profiles_dir = profiles_dir
         self.custom_dir.mkdir(parents=True, exist_ok=True)
 
     def list_waveforms(self) -> list[WaveformRecord]:
         records: list[WaveformRecord] = []
         records.extend(self._load_dir(self.fixtures_dir, "fixtures"))
         records.extend(self._load_dir(self.custom_dir, "custom"))
+        records.extend(self._load_profiles())
         return records
 
     def get_waveform(self, name: str) -> WaveformRecord:
@@ -54,11 +71,26 @@ class WaveformStore:
             path = directory / f"{name}.csv"
             if path.exists():
                 return WaveformRecord(name=name, source=source, points=_read_points(path))
+        for record in self._load_profiles():
+            if record.name == name:
+                path = self.profiles_dir / f"{name}.csv"
+                return WaveformRecord(
+                    name=name,
+                    source="profiles",
+                    points=_read_points(path),
+                    period_seconds=record.period_seconds,
+                    group=record.group,
+                    preview=record.preview,
+                )
         raise WaveformError(f"unknown waveform: {name}")
 
     def path_for(self, name: str) -> Path:
         record = self.get_waveform(name)
-        directory = self.custom_dir if record.source == "custom" else self.fixtures_dir
+        directory = {
+            "custom": self.custom_dir,
+            "fixtures": self.fixtures_dir,
+            "profiles": self.profiles_dir,
+        }[record.source]
         return directory / f"{name}.csv"
 
     def save_waveform(self, name: str, points: Iterable[tuple[float, float]]) -> WaveformRecord:
@@ -83,6 +115,26 @@ class WaveformStore:
                 WaveformRecord(name=path.stem, source=source, points=_read_points(path))
             )
         return records
+
+
+    def _load_profiles(self) -> list[WaveformRecord]:
+        try:
+            index = load_index(self.profiles_dir)
+        except ProfileError as exc:
+            raise WaveformError(str(exc)) from exc
+        if index is None:
+            return []
+        return [
+            WaveformRecord(
+                name=profile["name"],
+                source="profiles",
+                points=[],
+                period_seconds=index["period_seconds"],
+                group=profile["group"],
+                preview=[(x, y) for x, y in profile["preview"]],
+            )
+            for profile in index["profiles"]
+        ]
 
 
 def _read_points(path: Path) -> list[tuple[float, float]]:

@@ -38,6 +38,8 @@ export default function WaveformEditor({ points, onChange, onSaved, onToast }: P
   const [saveOpen, setSaveOpen] = useState(false);
   const [saveName, setSaveName] = useState("");
   const chartTheme = useChartTheme();
+  // Imported profiles have hundreds of points; draw them as a plain line.
+  const dense = points.length > 200;
 
   const data = useMemo<ChartData<"line", Point[]>>(
     () => ({
@@ -50,15 +52,15 @@ export default function WaveformEditor({ points, onChange, onSaved, onToast }: P
           pointBackgroundColor: chartTheme.point,
           pointBorderColor: chartTheme.pointBorder,
           pointBorderWidth: 1.5,
-          pointRadius: 4,
-          pointHoverRadius: 6,
-          borderWidth: 2,
+          pointRadius: dense ? 0 : 4,
+          pointHoverRadius: dense ? 0 : 6,
+          borderWidth: dense ? 1 : 2,
           tension: 0,
           fill: false
         }
       ]
     }),
-    [chartTheme, points]
+    [chartTheme, dense, points]
   );
 
   const options = useMemo<ChartOptions<"line">>(

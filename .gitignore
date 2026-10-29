@@ -57,3 +57,7 @@ third_party/gpu-burn/compare.ptx
 *.swp
 *.swo
 *~
+
+# Imported workload power profiles
+UI/profiles/*
+!UI/profiles/.gitkeep

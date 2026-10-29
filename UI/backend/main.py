@@ -1,10 +1,22 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
+import tempfile
 from contextlib import suppress
+from pathlib import Path
 from typing import Literal
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import (
+    BackgroundTasks,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -14,6 +26,7 @@ from burn_controller import BurnController, BurnError, BurnOverlapError, Machine
 from config import ConfigError, ConfigStore, UI_ROOT
 from file_transfer import FileTransfer
 from machine_info import query_hw_info
+from profile_library import DEFAULT_RESOLUTION_MS, ProfileError, import_profiles, load_index, summarize
 from sampling_controller import SamplingConflictError, SamplingController, SamplingError
 from ssh_manager import SSHManager
 from update_controller import UpdateConflictError, UpdateController
@@ -139,6 +152,7 @@ hub = WebSocketHub()
 ssh_manager = SSHManager(config_store)
 file_transfer = FileTransfer(ssh_manager)
 hw_cache: dict[str, dict[str, object]] = {}
+profile_import_lock = asyncio.Lock()
 
 
 async def broadcast(payload: dict[str, object]) -> None:
@@ -275,6 +289,41 @@ async def save_waveform(payload: WaveformCreate):
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except WaveformError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/profiles")
+async def profiles_summary():
+    try:
+        return summarize(load_index(waveforms.profiles_dir))
+    except ProfileError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/profiles/import")
+async def import_profile_csv(
+    file: UploadFile = File(...),
+    resolution_ms: int = Form(DEFAULT_RESOLUTION_MS),
+):
+    if not 1 <= resolution_ms <= 1000:
+        raise HTTPException(status_code=400, detail="resolution_ms must be between 1 and 1000")
+    if profile_import_lock.locked():
+        raise HTTPException(status_code=409, detail="Profile import is already running")
+    async with profile_import_lock:
+        with tempfile.TemporaryDirectory(prefix="burner-profiles-") as tmp:
+            upload_path = Path(tmp) / "profiles.csv"
+            with upload_path.open("wb") as handle:
+                await asyncio.to_thread(shutil.copyfileobj, file.file, handle)
+            try:
+                index = await asyncio.to_thread(
+                    import_profiles,
+                    upload_path,
+                    waveforms.profiles_dir,
+                    resolution_ms,
+                    source_name=file.filename or "profiles.csv",
+                )
+            except ProfileError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return summarize(index)
 
 
 @app.post("/api/burn/start")

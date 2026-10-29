@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+from bisect import bisect_left
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -21,6 +22,7 @@ class LoadCurve:
         self.points = list(points)
         if len(self.points) < 2:
             raise CurveFormatError("curve must contain at least 2 points")
+        self._xs = [point.x for point in self.points]
 
     @classmethod
     def from_csv(cls, path: str | Path) -> "LoadCurve":
@@ -68,10 +70,6 @@ class LoadCurve:
         if fraction < 0.0 or fraction > 1.0:
             fraction = fraction % 1.0
 
-        for point in self.points:
-            if fraction == point.x:
-                return point.y
-
         first = self.points[0]
         last = self.points[-1]
 
@@ -88,11 +86,11 @@ class LoadCurve:
                 CurvePoint(first.x + 1.0, first.y),
             )
 
-        for left, right in zip(self.points, self.points[1:]):
-            if left.x <= fraction <= right.x:
-                return _interpolate(fraction, left, right)
-
-        return last.y
+        index = bisect_left(self._xs, fraction)
+        right = self.points[index]
+        if right.x == fraction:
+            return right.y
+        return _interpolate(fraction, self.points[index - 1], right)
 
 
 def _clamp(value: float) -> float:

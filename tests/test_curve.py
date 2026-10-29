@@ -1,3 +1,5 @@
+import time
+
 import pytest
 
 from warpper.curve import CurveFormatError, LoadCurve
@@ -88,3 +90,27 @@ def test_parse_period_duration_accepts_decimal_values(text, seconds):
 def test_parse_period_duration_rejects_invalid_values(text):
     with pytest.raises(ValueError):
         parse_period_duration(text)
+
+
+def test_large_curve_lookup_interpolates_and_wraps(tmp_path):
+    rows = [f"{(index + 0.5) / 15000:.8f},{index % 2}" for index in range(15000)]
+    curve = LoadCurve.from_csv(write_curve(tmp_path, "\n".join(rows) + "\n"))
+
+    first_x = 0.5 / 15000
+    assert curve.value_at_fraction(first_x) == pytest.approx(0.0, abs=1e-3)
+    assert curve.value_at_fraction(first_x + 0.5 / 15000) == pytest.approx(0.5, abs=1e-3)
+    assert curve.value_at_fraction(1.5 / 15000) == pytest.approx(1.0, abs=1e-3)
+    assert curve.value_at_fraction(0.0) == pytest.approx(0.5, abs=1e-3)
+    assert curve.value_at_fraction(1.0) == pytest.approx(0.5, abs=1e-3)
+    assert curve.value_at_elapsed(150.0 + 0.015, 150.0) == pytest.approx(1.0, abs=1e-3)
+
+
+def test_large_curve_lookup_is_fast_enough_for_10ms_ticks(tmp_path):
+    rows = [f"{(index + 0.5) / 15000:.8f},{index % 2}" for index in range(15000)]
+    curve = LoadCurve.from_csv(write_curve(tmp_path, "\n".join(rows) + "\n"))
+
+    started = time.perf_counter()
+    for step in range(15000):
+        curve.value_at_elapsed(step * 0.01, 150.0)
+
+    assert time.perf_counter() - started < 1.0

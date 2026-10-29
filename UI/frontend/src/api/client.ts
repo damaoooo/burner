@@ -4,7 +4,9 @@ import type {
   JobInfo,
   MachineApiRecord,
   Point,
+  ProfileLibrarySummary,
   WaveformInfo,
+  WaveformSource,
   WorkloadGenerateRequest,
   WorkloadJobInfo,
   WorkloadScenario,
@@ -21,11 +23,21 @@ function toPointList(points: Array<[number, number]>): Point[] {
   return points.map(([x, y]) => ({ x, y }));
 }
 
-function toWaveform(raw: { name: string; source: "fixtures" | "custom"; points: Array<[number, number]> }): WaveformInfo {
+interface RawWaveform {
+  name: string;
+  source: WaveformSource;
+  points: Array<[number, number]>;
+  period_seconds?: number;
+  group?: string;
+}
+
+function toWaveform(raw: RawWaveform): WaveformInfo {
   return {
     name: raw.name,
     source: raw.source,
-    points: toPointList(raw.points)
+    points: toPointList(raw.points),
+    periodSeconds: raw.period_seconds,
+    group: raw.group
   };
 }
 
@@ -47,21 +59,17 @@ export async function refreshHwInfo(id: string): Promise<void> {
 }
 
 export async function fetchWaveforms(): Promise<WaveformInfo[]> {
-  const { data } = await http.get<Array<{ name: string; source: "fixtures" | "custom"; points: Array<[number, number]> }>>(
-    "/waveforms"
-  );
+  const { data } = await http.get<RawWaveform[]>("/waveforms");
   return data.map(toWaveform);
 }
 
 export async function fetchWaveform(name: string): Promise<WaveformInfo> {
-  const { data } = await http.get<{ name: string; source: "fixtures" | "custom"; points: Array<[number, number]> }>(
-    `/waveforms/${encodeURIComponent(name)}`
-  );
+  const { data } = await http.get<RawWaveform>(`/waveforms/${encodeURIComponent(name)}`);
   return toWaveform(data);
 }
 
 export async function saveWaveform(name: string, points: Point[]): Promise<WaveformInfo> {
-  const { data } = await http.post<{ name: string; source: "fixtures" | "custom"; points: Array<[number, number]> }>(
+  const { data } = await http.post<RawWaveform>(
     "/waveforms",
     {
       name,
@@ -69,6 +77,20 @@ export async function saveWaveform(name: string, points: Point[]): Promise<Wavef
     }
   );
   return toWaveform(data);
+}
+
+export async function fetchProfileSummary(): Promise<ProfileLibrarySummary> {
+  const { data } = await http.get<ProfileLibrarySummary>("/profiles");
+  return data;
+}
+
+export async function importProfiles(file: File, resolutionMs: number): Promise<ProfileLibrarySummary> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("resolution_ms", String(resolutionMs));
+  // Large profile CSVs take a while to upload and convert.
+  const { data } = await http.post<ProfileLibrarySummary>("/profiles/import", form, { timeout: 0 });
+  return data;
 }
 
 export async function startBurn(payload: BurnStartRequest): Promise<JobInfo[]> {

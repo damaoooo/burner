@@ -54,10 +54,24 @@ export interface MachineState {
   delaySeconds: number;
 }
 
+export type WaveformSource = "fixtures" | "custom" | "profiles";
+
 export interface WaveformInfo {
   name: string;
-  source: "fixtures" | "custom";
+  source: WaveformSource;
   points: Point[];
+  periodSeconds?: number;
+  group?: string;
+}
+
+export interface ProfileLibrarySummary {
+  imported: boolean;
+  count: number;
+  source?: string;
+  imported_at?: number;
+  resolution_ms?: number;
+  period_seconds?: number;
+  groups?: Record<string, number>;
 }
 
 export interface JobInfo {

@@ -11,6 +11,7 @@ interface Props {
 export default function WaveformSelector({ waveforms, value, onSelect, disabled }: Props) {
   const fixtures = waveforms.filter((waveform) => waveform.source === "fixtures");
   const custom = waveforms.filter((waveform) => waveform.source === "custom");
+  const profileGroups = groupProfiles(waveforms);
 
   async function handleChange(nextName: string) {
     if (!nextName) {
@@ -46,6 +47,27 @@ export default function WaveformSelector({ waveforms, value, onSelect, disabled 
           ))}
         </optgroup>
       )}
+      {profileGroups.map(([group, profiles]) => (
+        <optgroup key={`profiles:${group}`} label={`Profiles · ${group || "other"}`}>
+          {profiles.map((waveform) => (
+            <option key={`profiles:${waveform.name}`} value={waveform.name}>
+              {waveform.name}
+            </option>
+          ))}
+        </optgroup>
+      ))}
     </select>
   );
+}
+
+export function groupProfiles(waveforms: WaveformInfo[]): Array<[string, WaveformInfo[]]> {
+  const groups = new Map<string, WaveformInfo[]>();
+  for (const waveform of waveforms) {
+    if (waveform.source !== "profiles") {
+      continue;
+    }
+    const group = waveform.group ?? "";
+    groups.set(group, [...(groups.get(group) ?? []), waveform]);
+  }
+  return [...groups.entries()];
 }

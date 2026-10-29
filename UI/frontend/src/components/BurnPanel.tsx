@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { applySamplingTime, extractErrorMessage } from "../api/client";
 import ExpressionInput from "./ExpressionInput";
+import ProfileLibrary from "./ProfileLibrary";
 import WaveformEditor from "./WaveformEditor";
 import WaveformSelector from "./WaveformSelector";
 import { useAppState } from "../state/AppState";
@@ -33,6 +34,9 @@ export default function BurnPanel({ onToast }: Props) {
 
   function handleGlobalSelect(name: string, waveform: WaveformInfo) {
     dispatch({ type: "setGlobalWaveform", points: waveform.points, name });
+    if (waveform.periodSeconds) {
+      dispatch({ type: "setBurnParams", period: String(waveform.periodSeconds) });
+    }
   }
 
   useEffect(() => {
@@ -95,6 +99,7 @@ export default function BurnPanel({ onToast }: Props) {
               onToast={onToast}
             />
             <ExpressionInput onPointsGenerated={handleGeneratedPoints} />
+            <ProfileLibrary onToast={onToast} />
           </div>
 
           <div className="run-params">

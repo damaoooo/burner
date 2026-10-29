@@ -56,6 +56,9 @@ export default function MachineCard({ machine, onToast }: Props) {
       points: waveform.points,
       name
     });
+    if (waveform.periodSeconds) {
+      dispatch({ type: "setBurnParams", period: String(waveform.periodSeconds) });
+    }
   }
 
   return (

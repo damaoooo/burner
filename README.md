@@ -77,6 +77,15 @@ The WebUI also has a Server Room Workload panel for CPU-only, real-command
 multi-node simulation. Connect machines, run dependency setup, generate a
 scenario, then start it from the panel. Details are in `docs/workloads.md`.
 
+Recorded power profiles can be imported into the WebUI as waveforms. Each
+profile is scaled to its own peak and can be assigned per machine:
+
+```bash
+python scripts/import_profiles.py /path/to/workload_profiles.csv
+```
+
+Details are in `docs/profiles.md`.
+
 ## burner Usage
 
 ```bash
@@ -202,4 +211,5 @@ More detail is available in:
 - `docs/watcher.md`
 - `docs/choker.md`
 - `docs/workloads.md`
+- `docs/profiles.md`
 - `docs/third_party_changes.md`
