@@ -145,7 +145,7 @@ export function reducer(state: AppState, action: Action): AppState {
           hwInfo: record.hw_info ?? previous?.hwInfo,
           burnEnabled: previous?.burnEnabled ?? true,
           burnCpu: previous?.burnCpu ?? true,
-          burnGpu: previous?.burnGpu ?? true,
+          burnGpu: previous?.burnGpu ?? machineHasGpu(record),
           delaySeconds: previous?.delaySeconds ?? 0
         };
         if (record.job) {
@@ -198,11 +198,12 @@ export function reducer(state: AppState, action: Action): AppState {
       if (!machine) {
         return state;
       }
+      const hasGpu = action.hwInfo.gpus.length > 0 || action.hwInfo.gpu_tdp > 0;
       return {
         ...state,
         machines: {
           ...state.machines,
-          [action.machineId]: { ...machine, hwInfo: action.hwInfo }
+          [action.machineId]: { ...machine, hwInfo: action.hwInfo, burnGpu: hasGpu ? machine.burnGpu : false }
         }
       };
     }
@@ -701,6 +702,10 @@ export function reducer(state: AppState, action: Action): AppState {
     default:
       return state;
   }
+}
+
+function machineHasGpu(record: MachineApiRecord): boolean {
+  return record.gpu_tdp > 0 || ((record.hw_info?.gpus.length ?? 0) > 0);
 }
 
 export function normalizePoints(points: Point[]): Point[] {

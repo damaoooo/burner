@@ -133,11 +133,12 @@ export default function GlobalBurnBar({ onToast }: Props) {
       const waveformName = state.usePerMachineWaveform
         ? state.perMachineWaveformNames[machine.config.id] || state.globalWaveformName
         : state.globalWaveformName;
+      const gpuAvailable = machineHasGpu(machine);
       return {
         id: machine.config.id,
         enabled: machine.burnEnabled,
         burn_cpu: machine.burnCpu,
-        burn_gpu: machine.burnGpu,
+        burn_gpu: gpuAvailable && machine.burnGpu,
         delay_seconds: syncMode === "immediate" ? 0 : Math.max(0, machine.delaySeconds),
         waveform_name: waveformName
       };
@@ -223,11 +224,14 @@ export default function GlobalBurnBar({ onToast }: Props) {
         ) : (
           <span className="progress-text">{scheduledCount > 0 ? `${scheduledCount} scheduled` : "idle"}</span>
         )}
-        {hasJobs && (
-          <button type="button" className="danger-button" disabled={state.samplingBuild.running} onClick={() => void handleStop()}>
-            Stop All
-          </button>
-        )}
+        <button
+          type="button"
+          className="danger-button"
+          disabled={!hasJobs || state.samplingBuild.running}
+          onClick={() => void handleStop()}
+        >
+          Stop All
+        </button>
       </div>
 
       {pendingStart && (
@@ -362,6 +366,10 @@ function requestSyncMode(runMode: RunMode, selected: MachineState[]): SyncMode {
     return "scheduled";
   }
   return selected.some((machine) => Math.max(0, machine.delaySeconds) > 0) ? "delayed" : "immediate";
+}
+
+function machineHasGpu(machine: MachineState): boolean {
+  return (machine.hwInfo?.gpus.length ?? 0) > 0 || machine.config.gpu_tdp > 0;
 }
 
 function parseSamplingMs(value: string): number | undefined {

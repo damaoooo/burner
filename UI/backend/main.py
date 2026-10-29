@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import shlex
 import shutil
 import tempfile
 from contextlib import suppress
@@ -118,6 +120,18 @@ class GpuWorkloadStartPayload(BaseModel):
 class GpuWorkloadStopPayload(BaseModel):
     machine_ids: list[str] | Literal["all"] | None = None
     job_ids: list[str] | Literal["all"] | None = None
+
+
+class ChokerStartPayload(BaseModel):
+    machine_ids: list[str] | None = None
+    strategy: Literal["complement", "idle"] = "complement"
+    target: float = 100.0
+    threshold: float = 10.0
+    window_ms: int = 1000
+
+
+class ChokerStopPayload(BaseModel):
+    machine_ids: list[str] | Literal["all"] | None = None
 
 
 class WebSocketHub:
@@ -602,6 +616,52 @@ async def gpu_workload_status():
     return gpu_workload_controller.status()
 
 
+@app.post("/api/choker/start")
+async def start_choker(payload: ChokerStartPayload):
+    if payload.target < 0 or payload.target > 100:
+        raise HTTPException(status_code=400, detail="target must be between 0 and 100")
+    if payload.threshold < 0 or payload.threshold > 100:
+        raise HTTPException(status_code=400, detail="threshold must be between 0 and 100")
+    if payload.window_ms <= 0:
+        raise HTTPException(status_code=400, detail="window_ms must be greater than 0")
+    machine_ids = _resolve_choker_machine_ids(payload.machine_ids)
+    results = await asyncio.gather(
+        *[
+            _run_choker_command(
+                machine_id,
+                [
+                    "start",
+                    "--strategy",
+                    payload.strategy,
+                    "--target",
+                    str(payload.target),
+                    "--threshold",
+                    str(payload.threshold),
+                    "--window-ms",
+                    str(payload.window_ms),
+                ],
+            )
+            for machine_id in machine_ids
+        ]
+    )
+    return results
+
+
+@app.post("/api/choker/stop")
+async def stop_choker(payload: ChokerStopPayload):
+    machine_ids = _resolve_choker_machine_ids(payload.machine_ids)
+    results = await asyncio.gather(
+        *[_run_choker_command(machine_id, ["stop"]) for machine_id in machine_ids]
+    )
+    return results
+
+
+@app.get("/api/choker/status")
+async def choker_status():
+    machine_ids = _resolve_choker_machine_ids(None)
+    return await asyncio.gather(*[_read_choker_status(machine_id) for machine_id in machine_ids])
+
+
 @app.get("/api/workloads/setup/status")
 async def workload_setup_status():
     return workload_controller.setup_status()
@@ -855,6 +915,107 @@ def _require_machine(machine_id: str) -> None:
         config_store.get_machine(machine_id)
     except ConfigError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+def _resolve_choker_machine_ids(machine_ids: list[str] | Literal["all"] | None) -> list[str]:
+    if machine_ids == "all" or machine_ids is None:
+        ids = [
+            machine.id
+            for machine in config_store.list_machines()
+            if ssh_manager.status_for(machine.id) == "connected"
+        ]
+    else:
+        ids = machine_ids
+    if not ids:
+        raise HTTPException(status_code=400, detail="at least one connected machine is required")
+    for machine_id in ids:
+        _require_machine(machine_id)
+        if ssh_manager.status_for(machine_id) != "connected":
+            raise HTTPException(status_code=400, detail=f"machine {machine_id} is not connected")
+    return ids
+
+
+async def _run_choker_command(machine_id: str, args: list[str]) -> dict[str, object]:
+    machine = config_store.get_machine(machine_id)
+    command = " ".join(["python3", "-m", "choker", *[shlex.quote(arg) for arg in args]])
+    if args and args[0] == "start":
+        command = f"{_ensure_choker_dependencies_command()} && {command}"
+    stdout, stderr, exit_code = await ssh_manager.run_command(
+        machine_id,
+        f"cd {shlex.quote(machine.workdir)} && {command}",
+    )
+    status = await _read_choker_status(machine_id)
+    return {
+        **status,
+        "exit_code": exit_code,
+        "stdout": stdout.strip(),
+        "stderr": stderr.strip(),
+    }
+
+
+async def _read_choker_status(machine_id: str) -> dict[str, object]:
+    machine = config_store.get_machine(machine_id)
+    script = r"""
+import json
+import os
+import subprocess
+from pathlib import Path
+
+path = Path(".runtime/choker.pid")
+if not path.exists():
+    print(json.dumps({"state": "stopped"}))
+    raise SystemExit(0)
+
+try:
+    raw = json.loads(path.read_text())
+    pid = raw.get("pid") if isinstance(raw, dict) else raw
+    pid = int(pid)
+except Exception:
+    print(json.dumps({"state": "invalid", "message": "pidfile is invalid"}))
+    raise SystemExit(0)
+
+try:
+    os.kill(pid, 0)
+except ProcessLookupError:
+    print(json.dumps({"state": "stale", "pid": pid}))
+    raise SystemExit(0)
+except PermissionError:
+    print(json.dumps({"state": "error", "pid": pid, "message": "permission denied checking pid"}))
+    raise SystemExit(0)
+
+result = subprocess.run(["ps", "-p", str(pid), "-o", "args="], text=True, capture_output=True, check=False)
+command = result.stdout.strip()
+if "choker" in command:
+    print(json.dumps({"state": "running", "pid": pid, "command": command}))
+else:
+    print(json.dumps({"state": "stale", "pid": pid, "message": "pid belongs to non-choker process"}))
+""".strip()
+    stdout, stderr, exit_code = await ssh_manager.run_command(
+        machine_id,
+        f"cd {shlex.quote(machine.workdir)} && python3 -c {shlex.quote(script)}",
+    )
+    payload: dict[str, object] = {
+        "id": machine.id,
+        "name": machine.name,
+        "host": machine.host,
+        "state": "error",
+        "exit_code": exit_code,
+    }
+    if exit_code != 0:
+        payload["message"] = stderr.strip() or stdout.strip() or "failed to read choker status"
+        return payload
+    try:
+        parsed = json.loads(stdout.strip() or "{}")
+    except Exception:
+        parsed = {"state": "error", "message": stdout.strip() or "invalid status output"}
+    payload.update(parsed)
+    return payload
+
+
+def _ensure_choker_dependencies_command() -> str:
+    check_script = "import psutil, typer, rich, click"
+    install = "python3 -m pip install --user --break-system-packages typer psutil rich click"
+    return f"python3 -c {shlex.quote(check_script)} 2>/dev/null || {install}"
 
 
 FRONTEND_DIST = UI_ROOT / "frontend" / "dist"

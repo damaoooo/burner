@@ -210,7 +210,7 @@ function GpuScenarioTable({ scenario }: { scenario: GpuWorkloadScenario }) {
     <div className="workload-table gpu-task-table" aria-label="GPU workload scenario tasks">
       <div className="workload-row workload-row-head gpu-task-row">
         <span>Workload</span>
-        <span>Duration</span>
+        <span>Duration (s)</span>
         <span>Model</span>
         <span>Batch</span>
         <span>Precision</span>

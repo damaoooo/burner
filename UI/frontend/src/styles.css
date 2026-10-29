@@ -529,6 +529,14 @@ button:disabled {
   margin-bottom: 12px;
 }
 
+.machine-section-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
 .field {
   width: 100%;
   min-height: 38px;
@@ -1262,7 +1270,36 @@ button:disabled {
   grid-template-columns: 1fr 0.7fr minmax(220px, 1.6fr) 0.5fr 0.7fr;
 }
 
+.choker-status-row {
+  grid-template-columns: 1fr 0.7fr 0.55fr minmax(240px, 2fr);
+}
+
+.choker-state {
+  width: fit-content;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-weight: 900;
+}
+
+.choker-state.running {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.choker-state.stopped {
+  background: var(--panel-raised);
+  color: var(--text-muted);
+}
+
+.choker-state.stale,
+.choker-state.invalid,
+.choker-state.error {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
+}
+
 .gpu-task-row span,
+.choker-status-row span,
 .setup-row span,
 .workload-row span {
   min-width: 0;

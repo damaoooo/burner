@@ -212,6 +212,8 @@ class WorkloadController:
             raise WorkloadError("total_window_seconds must be greater than 0")
         if min_duration_seconds <= 0 or max_duration_seconds < min_duration_seconds:
             raise WorkloadError("duration range is invalid")
+        if max_duration_seconds > total_window_seconds:
+            raise WorkloadError("duration range must fit within total window")
         if min_workers <= 0 or max_workers < min_workers:
             raise WorkloadError("worker range is invalid")
 
@@ -230,7 +232,6 @@ class WorkloadController:
         workload_cycle = list(WORKLOAD_TYPES)
         for index, machine_id in enumerate(machine_ids):
             duration = rng.uniform(min_duration_seconds, max_duration_seconds)
-            duration = min(duration, total_window_seconds)
             latest_delay = max(0.0, total_window_seconds - duration)
             delay = rng.uniform(0.0, latest_delay)
             workload = workload_cycle[index % len(workload_cycle)]

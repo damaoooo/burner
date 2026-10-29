@@ -18,6 +18,7 @@ export default function MachineCard({ machine, onToast }: Props) {
   const isBurning = machineJobs.length > 0;
   const connected = machine.connectionStatus === "connected";
   const samplingRunning = state.samplingBuild.running;
+  const gpuAvailable = (machine.hwInfo?.gpus.length ?? 0) > 0 || machine.config.gpu_tdp > 0;
 
   useEffect(() => {
     if (machine.connectionStatus === "error" && machine.errorMessage) {
@@ -173,8 +174,8 @@ export default function MachineCard({ machine, onToast }: Props) {
         <label className="toggle-row">
           <input
             type="checkbox"
-            disabled={samplingRunning}
-            checked={machine.burnGpu}
+            disabled={samplingRunning || !gpuAvailable}
+            checked={gpuAvailable && machine.burnGpu}
             onChange={(event) =>
               dispatch({
                 type: "setMachineOption",
@@ -192,14 +193,15 @@ export default function MachineCard({ machine, onToast }: Props) {
             className="field"
             type="number"
             min={0}
-            step={0.01}
+            step={1}
+            inputMode="numeric"
             disabled={samplingRunning}
             value={machine.delaySeconds}
             onChange={(event) =>
               dispatch({
                 type: "setMachineDelay",
                 machineId: machine.config.id,
-                value: Number(event.target.value)
+                value: Math.max(0, Math.floor(Number(event.target.value) || 0))
               })
             }
           />

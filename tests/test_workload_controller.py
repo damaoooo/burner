@@ -73,6 +73,23 @@ def test_generate_scenario_is_stable_and_covers_requested_machines(tmp_path, mon
     assert (tmp_path / "server-room.json").exists()
 
 
+def test_generate_scenario_rejects_duration_longer_than_window(tmp_path, monkeypatch):
+    monkeypatch.setattr(workload_module, "SCENARIO_DIR", tmp_path)
+    controller = WorkloadController(FakeConfig(["node-1"]), FakeSSH(), FakeTransfer(), FakeBurn(), noop_broadcast)
+
+    with pytest.raises(WorkloadError, match="duration range must fit within total window"):
+        controller.generate_scenario(
+            name="server-room",
+            machine_ids=["node-1"],
+            seed=42,
+            total_window_seconds=120,
+            min_duration_seconds=300,
+            max_duration_seconds=600,
+            min_workers=1,
+            max_workers=3,
+        )
+
+
 def test_workload_setup_syncs_sources_and_installs_dependencies():
     async def run_test():
         ssh = FakeSSH()
@@ -250,4 +267,3 @@ class FakeStream:
 
     async def __anext__(self):
         raise StopAsyncIteration
-

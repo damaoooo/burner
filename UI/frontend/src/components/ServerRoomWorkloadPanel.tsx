@@ -139,6 +139,10 @@ export default function ServerRoomWorkloadPanel({ onToast }: Props) {
       onToast("Workload generator max values must be greater than or equal to min values.", "error");
       return undefined;
     }
+    if (parsed.maxDuration > parsed.totalWindow) {
+      onToast("Max Duration (s) must be less than or equal to Window (s).", "error");
+      return undefined;
+    }
     return {
       name: scenarioName.trim() || "server-room",
       machine_ids: connectedMachineIds,
@@ -188,8 +192,8 @@ export default function ServerRoomWorkloadPanel({ onToast }: Props) {
           <div className="workload-fields">
             <NumberField label="Seed" value={seed} onChange={setSeed} />
             <NumberField label="Window (s)" value={totalWindow} onChange={setTotalWindow} />
-            <NumberField label="Min Duration" value={minDuration} onChange={setMinDuration} />
-            <NumberField label="Max Duration" value={maxDuration} onChange={setMaxDuration} />
+            <NumberField label="Min Duration (s)" value={minDuration} onChange={setMinDuration} />
+            <NumberField label="Max Duration (s)" value={maxDuration} onChange={setMaxDuration} />
             <NumberField label="Min Workers" value={minWorkers} onChange={setMinWorkers} />
             <NumberField label="Max Workers" value={maxWorkers} onChange={setMaxWorkers} />
           </div>
@@ -248,8 +252,8 @@ function ScenarioTable({ scenario, machineNames }: { scenario: WorkloadScenario;
       <div className="workload-row workload-row-head">
         <span>Machine</span>
         <span>Workload</span>
-        <span>Delay</span>
-        <span>Duration</span>
+        <span>Delay (s)</span>
+        <span>Duration (s)</span>
         <span>Workers</span>
       </div>
       {scenario.jobs.map((job) => (

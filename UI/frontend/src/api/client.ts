@@ -1,6 +1,8 @@
 import axios from "axios";
 import type {
   BurnStartRequest,
+  ChokerMachineStatus,
+  ChokerStartRequest,
   GpuWorkloadJobInfo,
   GpuWorkloadScenario,
   GpuWorkloadScenarioSummary,
@@ -174,6 +176,21 @@ export async function stopGpuWorkloads(jobIds: string[] | "all"): Promise<void> 
 
 export async function fetchGpuWorkloadStatus(): Promise<GpuWorkloadJobInfo[]> {
   const { data } = await http.get<GpuWorkloadJobInfo[]>("/gpu-workloads/status");
+  return data;
+}
+
+export async function fetchChokerStatus(): Promise<ChokerMachineStatus[]> {
+  const { data } = await http.get<ChokerMachineStatus[]>("/choker/status");
+  return data;
+}
+
+export async function startChoker(payload: ChokerStartRequest): Promise<ChokerMachineStatus[]> {
+  const { data } = await http.post<ChokerMachineStatus[]>("/choker/start", payload);
+  return data;
+}
+
+export async function stopChoker(machineIds: string[] | "all"): Promise<ChokerMachineStatus[]> {
+  const { data } = await http.post<ChokerMachineStatus[]>("/choker/stop", { machine_ids: machineIds });
   return data;
 }
 

@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import BurnPanel from "./components/BurnPanel";
+import ChokerPanel from "./components/ChokerPanel";
 import GpuWorkloadPanel from "./components/GpuWorkloadPanel";
 import GlobalBurnBar from "./components/GlobalBurnBar";
 import MachineCard from "./components/MachineCard";
 import SchedulePanel from "./components/SchedulePanel";
 import ServerRoomWorkloadPanel from "./components/ServerRoomWorkloadPanel";
 import {
+  connectMachine,
+  disconnectMachine,
   extractErrorMessage,
   fetchBurnStatus,
   fetchGpuWorkloadScenarios,
@@ -31,6 +34,8 @@ export default function App() {
   const [state, dispatch] = useReducer(reducer, initialState);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [theme, setTheme] = useState<ThemeMode>(() => getInitialTheme());
+  const [connectingAll, setConnectingAll] = useState(false);
+  const [disconnectingAll, setDisconnectingAll] = useState(false);
 
   const addToast = useCallback((message: string, kind: Toast["kind"] = "info") => {
     const id = Date.now() + Math.random();
@@ -275,6 +280,17 @@ export default function App() {
     () => machines.filter((machine) => machine.connectionStatus === "connected").length,
     [machines]
   );
+  const connectableMachines = useMemo(
+    () =>
+      machines.filter(
+        (machine) => machine.connectionStatus !== "connected" && machine.connectionStatus !== "connecting"
+      ),
+    [machines]
+  );
+  const disconnectableMachines = useMemo(
+    () => machines.filter((machine) => machine.connectionStatus === "connected"),
+    [machines]
+  );
   const selectedCount = useMemo(
     () => machines.filter((machine) => machine.burnEnabled).length,
     [machines]
@@ -307,6 +323,74 @@ export default function App() {
 
   function toggleTheme() {
     setTheme((current) => (current === "dark" ? "light" : "dark"));
+  }
+
+  async function handleConnectAll() {
+    if (connectableMachines.length === 0) {
+      addToast("All machines are already connected.", "info");
+      return;
+    }
+
+    setConnectingAll(true);
+    connectableMachines.forEach((machine) => {
+      dispatch({
+        type: "setMachineStatus",
+        machineId: machine.config.id,
+        status: "connecting"
+      });
+    });
+
+    try {
+      const results = await Promise.allSettled(
+        connectableMachines.map((machine) => connectMachine(machine.config.id))
+      );
+      const failures = results.filter((result) => result.status === "rejected");
+      const refreshedMachines = await fetchMachines();
+      dispatch({ type: "setMachines", machines: refreshedMachines });
+
+      if (failures.length > 0) {
+        addToast(
+          `Connect all finished with ${failures.length} failed and ${results.length - failures.length} started.`,
+          "error"
+        );
+        return;
+      }
+      addToast(`Connect all started for ${results.length} machines.`, "success");
+    } catch (error) {
+      addToast(extractErrorMessage(error), "error");
+    } finally {
+      setConnectingAll(false);
+    }
+  }
+
+  async function handleDisconnectAll() {
+    if (disconnectableMachines.length === 0) {
+      addToast("No connected machines to disconnect.", "info");
+      return;
+    }
+
+    setDisconnectingAll(true);
+    try {
+      const results = await Promise.allSettled(
+        disconnectableMachines.map((machine) => disconnectMachine(machine.config.id))
+      );
+      const failures = results.filter((result) => result.status === "rejected");
+      const refreshedMachines = await fetchMachines();
+      dispatch({ type: "setMachines", machines: refreshedMachines });
+
+      if (failures.length > 0) {
+        addToast(
+          `Disconnect all finished with ${failures.length} failed and ${results.length - failures.length} disconnected.`,
+          "error"
+        );
+        return;
+      }
+      addToast(`Disconnected ${results.length} machines.`, "success");
+    } catch (error) {
+      addToast(extractErrorMessage(error), "error");
+    } finally {
+      setDisconnectingAll(false);
+    }
   }
 
   return (
@@ -362,12 +446,32 @@ export default function App() {
 
         <GpuWorkloadPanel onToast={addToast} />
 
+        <ChokerPanel onToast={addToast} />
+
         <BurnPanel onToast={addToast} />
 
         <section className="machine-section">
           <div className="section-heading">
             <h2>Machines</h2>
-            <span className="muted">{machines.length} configured</span>
+            <div className="machine-section-actions">
+              <span className="muted">{machines.length} configured</span>
+              <button
+                type="button"
+                className="primary-button"
+                disabled={connectingAll || disconnectingAll || connectableMachines.length === 0}
+                onClick={() => void handleConnectAll()}
+              >
+                {connectingAll ? "Connecting..." : "Connect All"}
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={connectingAll || disconnectingAll || disconnectableMachines.length === 0}
+                onClick={() => void handleDisconnectAll()}
+              >
+                {disconnectingAll ? "Disconnecting..." : "Disconnect All"}
+              </button>
+            </div>
           </div>
           {machines.length === 0 ? (
             <div className="empty-state">

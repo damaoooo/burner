@@ -3,6 +3,8 @@ export type SyncMode = "immediate" | "delayed" | "scheduled";
 export type RunMode = "realtime" | "schedule";
 export type SamplingBuildStatus = "idle" | "queued" | "running" | "success" | "failed";
 export type WorkloadSetupStatus = "queued" | "running" | "success" | "failed";
+export type ChokerStrategy = "complement" | "idle";
+export type ChokerState = "running" | "stopped" | "stale" | "invalid" | "error";
 export type WorkloadType = "crypto" | "compress" | "compile" | "python-cpu";
 export type GpuWorkloadType =
   | "gemm"
@@ -409,4 +411,25 @@ export interface GpuWorkloadStartRequest {
   scenario_name: string;
   gpu_index: number;
   image: string;
+}
+
+export interface ChokerStartRequest {
+  machine_ids?: string[];
+  strategy: ChokerStrategy;
+  target: number;
+  threshold: number;
+  window_ms: number;
+}
+
+export interface ChokerMachineStatus {
+  id: string;
+  name: string;
+  host: string;
+  state: ChokerState;
+  pid?: number;
+  command?: string;
+  message?: string;
+  exit_code?: number;
+  stdout?: string;
+  stderr?: string;
 }
