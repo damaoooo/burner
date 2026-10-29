@@ -34,6 +34,7 @@ export default function App() {
   const [state, dispatch] = useReducer(reducer, initialState);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [theme, setTheme] = useState<ThemeMode>(() => getInitialTheme());
+  const [tab, setTab] = useState<TabId>(() => getInitialTab());
   const [connectingAll, setConnectingAll] = useState(false);
   const [disconnectingAll, setDisconnectingAll] = useState(false);
 
@@ -309,6 +310,21 @@ export default function App() {
   const activeGpuWorkloads = Object.values(state.gpuWorkloadJobs).filter(
     (job) => job.started_at <= Date.now() / 1000 && Date.now() / 1000 < job.started_at + job.duration_seconds
   ).length;
+  const tabBadges: Record<TabId, string | undefined> = {
+    burn: activeJobs + scheduledJobs > 0 ? String(activeJobs + scheduledJobs) : undefined,
+    machines: `${connectedCount}/${machines.length}`,
+    workloads: activeWorkloads > 0 ? String(activeWorkloads) : undefined,
+    gpu: activeGpuWorkloads > 0 ? String(activeGpuWorkloads) : undefined,
+    choker: undefined
+  };
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(TAB_STORAGE_KEY, tab);
+    } catch {
+      // Remembering the tab is a convenience only.
+    }
+  }, [tab]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -440,17 +456,52 @@ export default function App() {
           />
         </section>
 
-        <SchedulePanel onToast={addToast} />
+        <nav className="tab-bar" role="tablist" aria-label="sections">
+          {TABS.map((item) => {
+            const badge = tabBadges[item.id];
+            return (
+              <button
+                key={item.id}
+                type="button"
+                role="tab"
+                id={`tab-${item.id}`}
+                aria-controls={`panel-${item.id}`}
+                aria-selected={tab === item.id}
+                className={tab === item.id ? "tab-button selected" : "tab-button"}
+                onClick={() => setTab(item.id)}
+              >
+                {item.label}
+                {badge && <span className="tab-badge">{badge}</span>}
+              </button>
+            );
+          })}
+        </nav>
 
-        <ServerRoomWorkloadPanel onToast={addToast} />
+        {/* Panels stay mounted so their form state and polling survive tab switches. */}
+        <div role="tabpanel" id="panel-burn" aria-labelledby="tab-burn" hidden={tab !== "burn"}>
+          <SchedulePanel onToast={addToast} />
+          <BurnPanel onToast={addToast} />
+        </div>
 
-        <GpuWorkloadPanel onToast={addToast} />
+        <div role="tabpanel" id="panel-workloads" aria-labelledby="tab-workloads" hidden={tab !== "workloads"}>
+          <ServerRoomWorkloadPanel onToast={addToast} />
+        </div>
 
-        <ChokerPanel onToast={addToast} />
+        <div role="tabpanel" id="panel-gpu" aria-labelledby="tab-gpu" hidden={tab !== "gpu"}>
+          <GpuWorkloadPanel onToast={addToast} />
+        </div>
 
-        <BurnPanel onToast={addToast} />
+        <div role="tabpanel" id="panel-choker" aria-labelledby="tab-choker" hidden={tab !== "choker"}>
+          <ChokerPanel onToast={addToast} />
+        </div>
 
-        <section className="machine-section">
+        <section
+          className="machine-section"
+          role="tabpanel"
+          id="panel-machines"
+          aria-labelledby="tab-machines"
+          hidden={tab !== "machines"}
+        >
           <div className="section-heading">
             <h2>Machines</h2>
             <div className="machine-section-actions">
@@ -496,6 +547,30 @@ export default function App() {
       </div>
     </AppStateContext.Provider>
   );
+}
+
+type TabId = "burn" | "machines" | "workloads" | "gpu" | "choker";
+
+const TABS: Array<{ id: TabId; label: string }> = [
+  { id: "burn", label: "Burn" },
+  { id: "machines", label: "Machines" },
+  { id: "workloads", label: "Server Room" },
+  { id: "gpu", label: "GPU Workload" },
+  { id: "choker", label: "Choker" }
+];
+
+const TAB_STORAGE_KEY = "burner-tab";
+
+function getInitialTab(): TabId {
+  try {
+    const stored = window.localStorage.getItem(TAB_STORAGE_KEY);
+    if (TABS.some((item) => item.id === stored)) {
+      return stored as TabId;
+    }
+  } catch {
+    // Storage can be unavailable; fall back to the first tab.
+  }
+  return "burn";
 }
 
 function StatusTile({ label, value, detail }: { label: string; value: number; detail: string }) {
