@@ -1557,6 +1557,48 @@ button:disabled {
   width: 110px;
 }
 
+.profile-map {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.profile-map-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  align-items: baseline;
+}
+
+.profile-map-table {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.profile-map-row {
+  display: grid;
+  grid-template-columns: minmax(64px, auto) minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.profile-map-name {
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.profile-map-row .field {
+  min-height: 32px;
+}
+
+.profile-map-text {
+  min-height: 84px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
 .profile-library-warning {
   margin: 0;
   border: 1px solid color-mix(in srgb, var(--warning) 44%, var(--border));

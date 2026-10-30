@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { extractErrorMessage, fetchProfileSummary, fetchWaveforms, importProfiles } from "../api/client";
 import { useAppState } from "../state/AppState";
-import type { ProfileLibrarySummary } from "../types";
+import type { ProfileLibrarySummary, WaveformInfo } from "../types";
 import { groupProfiles } from "./WaveformSelector";
 
 interface Props {
@@ -26,6 +26,11 @@ export default function ProfileLibrary({ onToast }: Props) {
     () => groups.filter(([name]) => !group || name === group).flatMap(([, items]) => items),
     [group, groups]
   );
+  const profilesByName = useMemo(
+    () => new Map(groups.flatMap(([, items]) => items).map((profile) => [profile.name, profile])),
+    [groups]
+  );
+  const [mappingText, setMappingText] = useState("");
   const enabledMachines = Object.values(state.machines).filter((machine) => machine.burnEnabled);
   const resolution = summary?.resolution_ms;
   const samplingTooSlow = resolution !== undefined && state.appliedSamplingMs > resolution * 2;
@@ -35,6 +40,88 @@ export default function ProfileLibrary({ onToast }: Props) {
       .then(setSummary)
       .catch(() => undefined);
   }, []);
+
+  function mappedProfile(machineId: string): string {
+    if (!state.usePerMachineWaveform) {
+      return "";
+    }
+    const name = state.perMachineWaveformNames[machineId] ?? "";
+    return profilesByName.has(name) ? name : "";
+  }
+
+  function assignProfiles(pairs: Array<[string, WaveformInfo]>) {
+    dispatch({ type: "setUsePerMachineWaveform", value: true });
+    for (const [machineId, profile] of pairs) {
+      dispatch({ type: "setPerMachineWaveform", machineId, points: profile.points, name: profile.name });
+    }
+    const period = pairs[0]?.[1].periodSeconds;
+    if (period) {
+      dispatch({ type: "setBurnParams", period: String(period) });
+    }
+  }
+
+  function assignOne(machineId: string, name: string) {
+    const profile = profilesByName.get(name);
+    if (profile) {
+      assignProfiles([[machineId, profile]]);
+      return;
+    }
+    dispatch({
+      type: "setPerMachineWaveform",
+      machineId,
+      points: state.globalWaveform,
+      name: state.globalWaveformName
+    });
+  }
+
+  function applyMappingText() {
+    const machinesByKey = new Map<string, string>();
+    for (const machine of Object.values(state.machines)) {
+      machinesByKey.set(machine.config.id, machine.config.id);
+      machinesByKey.set(machine.config.name, machine.config.id);
+    }
+    const pairs: Array<[string, WaveformInfo]> = [];
+    const errors: string[] = [];
+    mappingText.split(/\r?\n/).forEach((line, index) => {
+      const text = line.replace(/#.*/, "").trim();
+      if (!text) {
+        return;
+      }
+      const parts = text.split(/[\s,;:=\t]+/).filter(Boolean);
+      const machineId = machinesByKey.get(parts[0]);
+      const profile = profilesByName.get(parts[1] ?? "");
+      if (parts.length !== 2 || !machineId || !profile) {
+        errors.push(`line ${index + 1}: ${!machineId ? "unknown machine" : "unknown profile"} "${text}"`);
+        return;
+      }
+      pairs.push([machineId, profile]);
+    });
+    if (errors.length > 0) {
+      onToast(errors.slice(0, 3).join("; ") + (errors.length > 3 ? ` (+${errors.length - 3} more)` : ""), "error");
+      return;
+    }
+    if (pairs.length === 0) {
+      onToast("Mapping is empty.", "error");
+      return;
+    }
+    assignProfiles(pairs);
+    const disabled = pairs.filter(([machineId]) => !state.machines[machineId]?.burnEnabled).length;
+    onToast(
+      `Mapped ${pairs.length} machines.${disabled > 0 ? ` ${disabled} of them are not enabled for burn.` : ""}`,
+      disabled > 0 ? "info" : "success"
+    );
+  }
+
+  function exportMappingText() {
+    const lines = enabledMachines
+      .map((machine) => [machine.config.name, mappedProfile(machine.config.id)])
+      .filter(([, profile]) => profile)
+      .map(([name, profile]) => `${name} ${profile}`);
+    setMappingText(lines.join("\n"));
+    if (lines.length === 0) {
+      onToast("No enabled machine has a profile yet.", "info");
+    }
+  }
 
   async function handleImport() {
     const resolutionValue = Number(resolutionMs);
@@ -80,20 +167,12 @@ export default function ProfileLibrary({ onToast }: Props) {
     }
 
     const ordered = order === "shuffle" ? shuffle(profiles, seedValue) : profiles;
-    dispatch({ type: "setUsePerMachineWaveform", value: true });
-    enabledMachines.forEach((machine, index) => {
-      const profile = ordered[(start - 1 + index) % ordered.length];
-      dispatch({
-        type: "setPerMachineWaveform",
-        machineId: machine.config.id,
-        points: profile.points,
-        name: profile.name
-      });
-    });
-    const period = ordered[0].periodSeconds;
-    if (period) {
-      dispatch({ type: "setBurnParams", period: String(period) });
-    }
+    assignProfiles(
+      enabledMachines.map((machine, index): [string, WaveformInfo] => [
+        machine.config.id,
+        ordered[(start - 1 + index) % ordered.length]
+      ])
+    );
     const wrapped = enabledMachines.length > ordered.length ? " Some profiles repeat." : "";
     onToast(`Assigned profiles to ${enabledMachines.length} machines.${wrapped}`, "success");
   }
@@ -195,6 +274,56 @@ export default function ProfileLibrary({ onToast }: Props) {
         >
           Assign to {enabledMachines.length} enabled machines
         </button>
+      </div>
+
+      <div className="profile-map">
+        <div className="profile-map-head">
+          <strong>Machine → Profile</strong>
+          <span className="muted">Pick a column per machine, or paste one "machine profile" pair per line.</span>
+        </div>
+        {enabledMachines.length === 0 ? (
+          <p className="muted">Enable machines on the Machines tab to map them.</p>
+        ) : (
+          <div className="profile-map-table">
+            {enabledMachines.map((machine) => (
+              <label className="profile-map-row" key={machine.config.id}>
+                <span className="profile-map-name">{machine.config.name}</span>
+                <select
+                  className="field"
+                  value={mappedProfile(machine.config.id)}
+                  onChange={(event) => assignOne(machine.config.id, event.target.value)}
+                >
+                  <option value="">(global waveform)</option>
+                  {groups.map(([name, items]) => (
+                    <optgroup key={name} label={name || "other"}>
+                      {items.map((profile) => (
+                        <option key={profile.name} value={profile.name}>
+                          {profile.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+              </label>
+            ))}
+          </div>
+        )}
+        <textarea
+          className="field profile-map-text"
+          rows={4}
+          spellCheck={false}
+          placeholder={"node-15 cl003\nnode-16 bg042"}
+          value={mappingText}
+          onChange={(event) => setMappingText(event.target.value)}
+        />
+        <div className="profile-library-row">
+          <button type="button" className="secondary-button" onClick={applyMappingText}>
+            Apply text
+          </button>
+          <button type="button" className="secondary-button" onClick={exportMappingText}>
+            Show current mapping
+          </button>
+        </div>
       </div>
 
       {samplingTooSlow && (
