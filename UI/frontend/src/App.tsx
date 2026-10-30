@@ -469,9 +469,14 @@ export default function App() {
           </div>
           <div className="header-actions">
             <div className="header-controls">
-              <button type="button" className="theme-toggle" onClick={toggleTheme}>
-                {theme === "dark" ? "Day Mode" : "Night Mode"}
-              </button>
+              <div className="header-links">
+                <button type="button" className="theme-toggle" onClick={toggleTheme}>
+                  {theme === "dark" ? "Day Mode" : "Night Mode"}
+                </button>
+                <a className="theme-toggle api-link" href="/docs" target="_blank" rel="noreferrer" title="Interactive API docs">
+                  API
+                </a>
+              </div>
               <RunModeSwitch
                 value={state.runMode}
                 disabled={state.samplingBuild.running}

@@ -311,6 +311,18 @@ button:disabled {
   align-items: stretch;
 }
 
+.header-links {
+  display: grid;
+  gap: 8px;
+}
+
+.api-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
 .theme-toggle {
   min-height: 100%;
   border: 1px solid var(--border);

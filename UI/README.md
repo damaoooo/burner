@@ -16,6 +16,11 @@ http://localhost:8000
 
 The frontend, `/api/*`, and `/ws` are all served by the same FastAPI process.
 
+API docs are generated from the code and always match the running server:
+`/docs` (interactive, try calls from the browser), `/redoc` (read-only) and
+`/openapi.json`. The **API** link in the page header opens `/docs`. Live
+events on `/ws` are described at the top of `/docs`.
+
 Optional environment variables:
 
 ```bash

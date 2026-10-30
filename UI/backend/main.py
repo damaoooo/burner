@@ -22,7 +22,8 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from fastapi.routing import APIRoute
+from pydantic import BaseModel, Field
 
 from burn_controller import BurnController, BurnError, BurnOverlapError, MachineBurnRequest
 from config import ConfigError, ConfigStore, UI_ROOT
@@ -62,13 +63,16 @@ class WaveformCreate(BaseModel):
 
 
 class PowerStartPayload(BaseModel):
-    machine_ids: list[str] | None = None
-    interval_ms: int = round(DEFAULT_POWER_INTERVAL * 1000)
+    machine_ids: list[str] | None = Field(None, description="Machines to sample; default: every connected machine.")
+    interval_ms: int = Field(
+        round(DEFAULT_POWER_INTERVAL * 1000),
+        description="Sampling bin in ms (20-5000). Bins are aligned to wall-clock time on every machine.",
+    )
 
 
 class WaveformAssignmentsPayload(BaseModel):
-    use_per_machine: bool
-    assignments: dict[str, str]
+    use_per_machine: bool = Field(description="True: each machine runs its own waveform below.")
+    assignments: dict[str, str] = Field(description="Machine id -> waveform or profile name.")
 
 
 class BurnMachinePayload(BaseModel):
@@ -81,12 +85,19 @@ class BurnMachinePayload(BaseModel):
 
 
 class BurnStartPayload(BaseModel):
-    sync_mode: Literal["immediate", "delayed", "scheduled"] = "immediate"
-    start_time_utc: str | None = None
-    duration: str
-    period: str
-    tick_seconds: float = 0.1
-    cpu_engine: Literal["lookbusy", "pwm"] = "lookbusy"
+    sync_mode: Literal["immediate", "delayed", "scheduled"] = Field(
+        "immediate",
+        description="immediate: each machine starts when its command lands; delayed: all start together 5 s "
+        "after the waveforms are copied (what the WebUI Realtime mode sends); scheduled: all start at start_time_utc.",
+    )
+    start_time_utc: str | None = Field(None, description="ISO UTC time ending in Z; required for scheduled.")
+    duration: str = Field(description="Total run time, integer with s/m/h, e.g. 150s.")
+    period: str = Field(description="One waveform period, e.g. 150s or 0.5s; the curve repeats within duration.")
+    tick_seconds: float = Field(0.1, description="How often burner updates the load; the WebUI sends the applied sampling time.")
+    cpu_engine: Literal["lookbusy", "pwm"] = Field(
+        "lookbusy",
+        description="CPU load generator. pwm = native/cpu_pwm: every CPU busy/idle in step, repeatable power per level.",
+    )
     machines: list[BurnMachinePayload]
 
 
@@ -96,8 +107,8 @@ class BurnStopPayload(BaseModel):
 
 
 class SamplingApplyPayload(BaseModel):
-    sampling_ms: int
-    machine_ids: list[str] | None = None
+    sampling_ms: int = Field(description="Control interval compiled into lookbusy / gpu_burn, 10-1000 ms.")
+    machine_ids: list[str] | None = Field(None, description="Default: every connected machine.")
 
 
 class WorkloadSetupPayload(BaseModel):
@@ -270,7 +281,48 @@ async def on_machine_status(machine_id: str, status: str, message: str | None) -
 
 ssh_manager.set_status_callback(on_machine_status)
 
-app = FastAPI(title="Burner WebUI")
+API_DESCRIPTION = """
+REST API behind the Burner WebUI. Every page action goes through these
+endpoints, so anything the page does can be scripted.
+
+Live updates are pushed over the WebSocket **`/ws`** (not listed below) as
+JSON objects with an `event` field, for example `machine_status`,
+`hw_info`, `burn_started`, `burn_stopped`, `sampling_build_progress`,
+`power_samples` (`samples`: `[epoch_s, total_W, nodes, [per-machine W]]`)
+and `power_status`.
+"""
+
+OPENAPI_TAGS = [
+    {"name": "Machines", "description": "Configured machines, SSH connections and hardware info."},
+    {"name": "Burn", "description": "Start, stop and watch waveform burns."},
+    {"name": "Waveforms & profiles", "description": "Waveform curves, imported power profiles and per-machine assignments."},
+    {"name": "Power monitor", "description": "Live RAPL CPU package power from every machine."},
+    {"name": "Sampling & update", "description": "Rebuild burn backends with a control interval; update machines."},
+    {"name": "Server room workloads", "description": "Generated multi-node CPU workload scenarios."},
+    {"name": "GPU workloads", "description": "Docker GPU workload scenarios."},
+    {"name": "Choker", "description": "Idle-CPU filler daemon on the machines."},
+]
+
+# Path prefix -> group in /docs (longest prefixes first).
+_TAG_PREFIXES = [
+    ("/api/gpu-workload", "GPU workloads"),
+    ("/api/workload", "Server room workloads"),
+    ("/api/waveform", "Waveforms & profiles"),
+    ("/api/profiles", "Waveforms & profiles"),
+    ("/api/machines", "Machines"),
+    ("/api/burn", "Burn"),
+    ("/api/power", "Power monitor"),
+    ("/api/sampling", "Sampling & update"),
+    ("/api/update", "Sampling & update"),
+    ("/api/choker", "Choker"),
+]
+
+app = FastAPI(
+    title="Burner WebUI",
+    version="0.2.0",
+    description=API_DESCRIPTION,
+    openapi_tags=OPENAPI_TAGS,
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -363,6 +415,7 @@ async def save_waveform(payload: WaveformCreate):
 
 @app.get("/api/waveform-assignments")
 async def get_waveform_assignments():
+    """Per-machine waveform choice saved on the server (what the WebUI loads on start)."""
     try:
         return load_assignments(ASSIGNMENTS_PATH)
     except AssignmentError as exc:
@@ -371,6 +424,7 @@ async def get_waveform_assignments():
 
 @app.put("/api/waveform-assignments")
 async def put_waveform_assignments(payload: WaveformAssignmentsPayload):
+    """Replace the saved per-machine waveform choice. Unknown machines and invalid names are rejected."""
     known = {machine.id for machine in config_store.list_machines()}
     try:
         return save_assignments(ASSIGNMENTS_PATH, payload.use_per_machine, payload.assignments, known)
@@ -380,6 +434,7 @@ async def put_waveform_assignments(payload: WaveformAssignmentsPayload):
 
 @app.post("/api/power/start")
 async def start_power_monitor(payload: PowerStartPayload):
+    """Start sampling RAPL CPU package power on the machines. Samples are summed per time bin and pushed as `power_samples` events on `/ws`."""
     machine_ids = payload.machine_ids
     if machine_ids is None:
         machine_ids = [
@@ -395,16 +450,19 @@ async def start_power_monitor(payload: PowerStartPayload):
 
 @app.post("/api/power/stop")
 async def stop_power_monitor():
+    """Stop the power monitor. Recorded samples stay available for history and CSV export."""
     return await power_monitor.stop()
 
 
 @app.get("/api/power/history")
 async def power_history(seconds: float = 600):
+    """Monitor status and the last `seconds` of samples: `[epoch_s, total_W, nodes, [per-machine W in status.machines order, null if missing]]`. Up to 30 min is kept."""
     return {"status": power_monitor.status(), "samples": [list(row) for row in power_monitor.history(seconds)]}
 
 
 @app.get("/api/power/export.csv")
 async def export_power_csv():
+    """All recorded samples as CSV: epoch_s, total_W, nodes, then one column per machine."""
     try:
         body = power_monitor.to_csv()
     except PowerMonitorError as exc:
@@ -418,6 +476,7 @@ async def export_power_csv():
 
 @app.get("/api/profiles")
 async def profiles_summary():
+    """Summary of the imported profile library: count, groups, period, resolution and normalization."""
     try:
         return summarize(load_index(waveforms.profiles_dir))
     except ProfileError as exc:
@@ -426,10 +485,14 @@ async def profiles_summary():
 
 @app.post("/api/profiles/import")
 async def import_profile_csv(
-    file: UploadFile = File(...),
-    resolution_ms: int = Form(DEFAULT_RESOLUTION_MS),
-    normalize: str = Form(DEFAULT_NORMALIZE),
+    file: UploadFile = File(..., description="Wide CSV: time column (s) first, then one column per profile."),
+    resolution_ms: int = Form(DEFAULT_RESOLUTION_MS, description="Bin size in ms (1-1000)."),
+    normalize: str = Form(
+        DEFAULT_NORMALIZE,
+        description="global: divide every profile by the highest peak (keeps relative sizes); self: each by its own peak.",
+    ),
 ):
+    """Import a power-profile CSV as waveforms, replacing the previous library."""
     if not 1 <= resolution_ms <= 1000:
         raise HTTPException(status_code=400, detail="resolution_ms must be between 1 and 1000")
     if normalize not in NORMALIZE_MODES:
@@ -457,6 +520,7 @@ async def import_profile_csv(
 
 @app.post("/api/burn/start")
 async def start_burn(payload: BurnStartPayload):
+    """Start a burn on the enabled machines. Each machine gets its own waveform copy; see `sync_mode` for how starts are aligned."""
     if sampling_controller.is_running():
         raise HTTPException(status_code=409, detail="Sampling rebuild is currently running")
     for item in payload.machines:
@@ -526,6 +590,7 @@ async def update_machine(machine_id: str, background_tasks: BackgroundTasks):
 
 @app.post("/api/sampling/apply")
 async def apply_sampling_time(payload: SamplingApplyPayload, background_tasks: BackgroundTasks):
+    """Rebuild lookbusy (and gpu_burn, cpu_pwm) on the machines with a new control interval. Progress arrives as `sampling_build_*` events on `/ws`."""
     try:
         machines = config_store.list_machines()
     except ConfigError as exc:
@@ -1108,12 +1173,12 @@ if FRONTEND_ASSETS.exists():
     app.mount("/assets", StaticFiles(directory=FRONTEND_ASSETS), name="assets")
 
 
-@app.get("/")
+@app.get("/", include_in_schema=False)
 async def frontend_index():
     return _frontend_index()
 
 
-@app.get("/{path:path}")
+@app.get("/{path:path}", include_in_schema=False)
 async def frontend_fallback(path: str):
     if path.startswith("api/") or path == "ws":
         raise HTTPException(status_code=404, detail="Not found")
@@ -1137,3 +1202,12 @@ async def shutdown() -> None:
     for machine in config_store.list_machines():
         with suppress(Exception):
             await ssh_manager.disconnect(machine.id)
+
+
+def _tag_api_routes() -> None:
+    for route in app.routes:
+        if isinstance(route, APIRoute) and route.include_in_schema and not route.tags:
+            route.tags = [next(tag for prefix, tag in _TAG_PREFIXES if route.path.startswith(prefix))]
+
+
+_tag_api_routes()
