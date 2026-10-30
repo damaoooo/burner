@@ -30,11 +30,37 @@ def square_rows(period: float = 1.0, dt: float = 0.002) -> list[list[float]]:
     return rows
 
 
-def test_import_profiles_bins_and_normalizes_each_profile_to_its_own_peak(tmp_path):
+def test_import_profiles_scales_all_profiles_by_the_global_peak_by_default(tmp_path):
     source = write_profiles(tmp_path / "profiles.csv", square_rows())
     dest = tmp_path / "out"
 
     index = import_profiles(source, dest, resolution_ms=10)
+
+    assert index["normalize"] == "global"
+    assert index["scale"] == pytest.approx(10.0)
+    cl = LoadCurve.from_csv(dest / "cl001.csv")
+    assert cl.value_at_fraction(0.25) == pytest.approx(0.4)
+    assert cl.value_at_fraction(0.75) == pytest.approx(0.06)
+    bg = LoadCurve.from_csv(dest / "bg001.csv")
+    assert bg.value_at_fraction(0.25) == pytest.approx(0.15)
+    assert bg.value_at_fraction(0.75) == pytest.approx(1.0)
+
+
+def test_import_profiles_rejects_unknown_normalize_mode(tmp_path):
+    source = write_profiles(tmp_path / "profiles.csv", square_rows())
+
+    with pytest.raises(ProfileError, match="normalize"):
+        import_profiles(source, tmp_path / "out", normalize="median")
+
+
+def test_import_profiles_bins_and_normalizes_each_profile_to_its_own_peak(tmp_path):
+    source = write_profiles(tmp_path / "profiles.csv", square_rows())
+    dest = tmp_path / "out"
+
+    index = import_profiles(source, dest, resolution_ms=10, normalize="self")
+
+    assert index["normalize"] == "self"
+    assert "scale" not in index
 
     assert index["period_seconds"] == pytest.approx(1.0)
     assert index["resolution_ms"] == 10

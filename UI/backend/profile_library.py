@@ -15,6 +15,8 @@ PROFILES_DIR = UI_ROOT / "profiles"
 INDEX_NAME = "index.json"
 DEFAULT_RESOLUTION_MS = 10
 DEFAULT_PREVIEW_POINTS = 750
+NORMALIZE_MODES = ("global", "self")
+DEFAULT_NORMALIZE = "global"
 NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 GROUP_RE = re.compile(r"^[A-Za-z]+")
 
@@ -29,14 +31,21 @@ def import_profiles(
     resolution_ms: int = DEFAULT_RESOLUTION_MS,
     preview_points: int = DEFAULT_PREVIEW_POINTS,
     source_name: str | None = None,
+    normalize: str = DEFAULT_NORMALIZE,
 ) -> dict[str, object]:
     """Convert a wide power-profile CSV into one normalized curve CSV per profile.
 
     The first column is time in seconds and spans exactly one period: the last
     row marks the period end and is not part of the curve. Every other column
-    is one profile. Samples are averaged into ``resolution_ms`` bins and each
-    profile is divided by its own peak bin, so its peak maps to 100% burn.
+    is one profile. Samples are averaged into ``resolution_ms`` bins.
+
+    ``normalize="global"`` divides every profile by the highest bin across all
+    profiles, so their relative sizes are kept and only the largest profile
+    reaches 100% burn. ``normalize="self"`` divides each profile by its own
+    peak bin, so every profile peaks at 100%.
     """
+    if normalize not in NORMALIZE_MODES:
+        raise ProfileError(f"normalize must be one of {', '.join(NORMALIZE_MODES)}")
     if resolution_ms <= 0:
         raise ProfileError("resolution_ms must be greater than 0")
     resolution = resolution_ms / 1000.0
@@ -47,13 +56,16 @@ def import_profiles(
     filled = [index for index in range(bin_count) if counts[index] > 0]
     xs = [(index + 0.5) / bin_count for index in filled]
 
+    columns = [[sums[column][index] / counts[index] for index in filled] for column in range(len(names))]
+    global_peak = max(max(values) for values in columns)
+
     dest.mkdir(parents=True, exist_ok=True)
     _remove_previous_import(dest)
     profiles = []
-    for column_index, name in enumerate(names):
-        values = [sums[column_index][index] / counts[index] for index in filled]
+    for name, values in zip(names, columns):
         peak = max(values)
-        ys = [value / peak for value in values] if peak > 0 else [0.0 for _ in values]
+        scale = global_peak if normalize == "global" else peak
+        ys = [value / scale for value in values] if scale > 0 else [0.0 for _ in values]
         _write_curve(dest / f"{name}.csv", xs, ys)
         group = GROUP_RE.match(name)
         profiles.append(
@@ -71,8 +83,11 @@ def import_profiles(
         "imported_at": time.time(),
         "resolution_ms": resolution_ms,
         "period_seconds": period,
+        "normalize": normalize,
         "profiles": profiles,
     }
+    if normalize == "global":
+        index["scale"] = global_peak
     (dest / INDEX_NAME).write_text(json.dumps(index), encoding="utf-8")
     return index
 
@@ -111,6 +126,9 @@ def summarize(index: dict[str, object] | None) -> dict[str, object]:
         "imported_at": index["imported_at"],
         "resolution_ms": index["resolution_ms"],
         "period_seconds": index["period_seconds"],
+        # Imports from before normalization was selectable used "self".
+        "normalize": index.get("normalize", "self"),
+        "scale": index.get("scale"),
         "groups": groups,
     }
 

@@ -26,8 +26,12 @@ t_s,cl001,cl002,...,bg001,...
 For every profile the importer:
 
 1. averages samples into `resolution_ms` bins (default 10 ms);
-2. divides by that profile's own peak bin, so the peak becomes 100% burn and
-   every other value is a fraction of it;
+2. scales it to `0..1` with the selected normalization:
+   - `global` (default): divides every profile by the highest bin across all
+     profiles. Relative sizes between profiles are kept; only the largest
+     profile reaches 100% burn. The divisor is stored as `scale` in the index.
+   - `self`: divides each profile by its own peak bin, so every profile peaks
+     at 100% burn and relative sizes are lost;
 3. writes `UI/profiles/<name>.csv` in the normal curve format, with points at
    bin centers.
 
@@ -42,7 +46,7 @@ From the WebUI, use **Power Profiles → Import CSV** under the waveform editor.
 From a shell on the WebUI host:
 
 ```bash
-python scripts/import_profiles.py /path/to/workload_profiles.csv --resolution-ms 10
+python scripts/import_profiles.py /path/to/workload_profiles.csv --resolution-ms 10 --normalize global
 ```
 
 ## Running profiles

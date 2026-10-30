@@ -34,7 +34,15 @@ from gpu_workload_controller import (
     GpuWorkloadError,
 )
 from machine_info import query_hw_info
-from profile_library import DEFAULT_RESOLUTION_MS, ProfileError, import_profiles, load_index, summarize
+from profile_library import (
+    DEFAULT_NORMALIZE,
+    DEFAULT_RESOLUTION_MS,
+    NORMALIZE_MODES,
+    ProfileError,
+    import_profiles,
+    load_index,
+    summarize,
+)
 from sampling_controller import SamplingConflictError, SamplingController, SamplingError
 from ssh_manager import SSHManager
 from update_controller import UpdateConflictError, UpdateController
@@ -374,9 +382,12 @@ async def profiles_summary():
 async def import_profile_csv(
     file: UploadFile = File(...),
     resolution_ms: int = Form(DEFAULT_RESOLUTION_MS),
+    normalize: str = Form(DEFAULT_NORMALIZE),
 ):
     if not 1 <= resolution_ms <= 1000:
         raise HTTPException(status_code=400, detail="resolution_ms must be between 1 and 1000")
+    if normalize not in NORMALIZE_MODES:
+        raise HTTPException(status_code=400, detail=f"normalize must be one of {', '.join(NORMALIZE_MODES)}")
     if profile_import_lock.locked():
         raise HTTPException(status_code=409, detail="Profile import is already running")
     async with profile_import_lock:
@@ -391,6 +402,7 @@ async def import_profile_csv(
                     waveforms.profiles_dir,
                     resolution_ms,
                     source_name=file.filename or "profiles.csv",
+                    normalize=normalize,
                 )
             except ProfileError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc

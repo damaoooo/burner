@@ -82,6 +82,8 @@ export interface WaveformAssignments {
   assignments: Record<string, string>;
 }
 
+export type ProfileNormalize = "global" | "self";
+
 export interface ProfileLibrarySummary {
   imported: boolean;
   count: number;
@@ -89,6 +91,8 @@ export interface ProfileLibrarySummary {
   imported_at?: number;
   resolution_ms?: number;
   period_seconds?: number;
+  normalize?: ProfileNormalize;
+  scale?: number | null;
   groups?: Record<string, number>;
 }
 

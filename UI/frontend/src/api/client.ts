@@ -12,6 +12,7 @@ import type {
   MachineApiRecord,
   Point,
   ProfileLibrarySummary,
+  ProfileNormalize,
   WaveformAssignments,
   WaveformInfo,
   WaveformSource,
@@ -102,10 +103,15 @@ export async function fetchProfileSummary(): Promise<ProfileLibrarySummary> {
   return data;
 }
 
-export async function importProfiles(file: File, resolutionMs: number): Promise<ProfileLibrarySummary> {
+export async function importProfiles(
+  file: File,
+  resolutionMs: number,
+  normalize: ProfileNormalize
+): Promise<ProfileLibrarySummary> {
   const form = new FormData();
   form.append("file", file);
   form.append("resolution_ms", String(resolutionMs));
+  form.append("normalize", normalize);
   // Large profile CSVs take a while to upload and convert.
   const { data } = await http.post<ProfileLibrarySummary>("/profiles/import", form, { timeout: 0 });
   return data;

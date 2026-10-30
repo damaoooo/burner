@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { extractErrorMessage, fetchProfileSummary, fetchWaveforms, importProfiles } from "../api/client";
 import { useAppState } from "../state/AppState";
-import type { ProfileLibrarySummary, WaveformInfo } from "../types";
+import type { ProfileLibrarySummary, ProfileNormalize, WaveformInfo } from "../types";
 import { groupProfiles } from "./WaveformSelector";
 
 interface Props {
@@ -15,6 +15,7 @@ export default function ProfileLibrary({ onToast }: Props) {
   const [summary, setSummary] = useState<ProfileLibrarySummary | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [resolutionMs, setResolutionMs] = useState("10");
+  const [normalize, setNormalize] = useState<ProfileNormalize>("global");
   const [importing, setImporting] = useState(false);
   const [group, setGroup] = useState("");
   const [order, setOrder] = useState<AssignOrder>("sequential");
@@ -135,7 +136,7 @@ export default function ProfileLibrary({ onToast }: Props) {
     }
     setImporting(true);
     try {
-      const imported = await importProfiles(file, resolutionValue);
+      const imported = await importProfiles(file, resolutionValue, normalize);
       setSummary(imported);
       dispatch({ type: "setWaveforms", waveforms: await fetchWaveforms() });
       onToast(`Imported ${imported.count} profiles.`, "success");
@@ -189,9 +190,13 @@ export default function ProfileLibrary({ onToast }: Props) {
             : "No profiles imported"}
         </span>
       </div>
-      <p className="profile-library-note">
-        Each profile is scaled to its own peak: the peak is 100% burn.
-      </p>
+      {summary?.imported && (
+        <p className="profile-library-note">
+          {summary.normalize === "global"
+            ? `All profiles share one scale: ${formatWatts(summary.scale)} (the highest peak) is 100% burn, so their relative sizes are kept.`
+            : "Each profile is scaled to its own peak: every profile peaks at 100% burn."}
+        </p>
+      )}
 
       <div className="profile-library-row">
         <input
@@ -213,6 +218,18 @@ export default function ProfileLibrary({ onToast }: Props) {
             value={resolutionMs}
             onChange={(event) => setResolutionMs(event.target.value)}
           />
+        </label>
+        <label className="profile-library-inline">
+          <span>Normalize</span>
+          <select
+            className="field"
+            disabled={importing}
+            value={normalize}
+            onChange={(event) => setNormalize(event.target.value as ProfileNormalize)}
+          >
+            <option value="global">Shared scale (highest peak = 100%)</option>
+            <option value="self">Each to its own peak</option>
+          </select>
         </label>
         <button
           type="button"
@@ -334,6 +351,10 @@ export default function ProfileLibrary({ onToast }: Props) {
       )}
     </div>
   );
+}
+
+function formatWatts(value: number | null | undefined): string {
+  return value === null || value === undefined ? "the highest peak" : `${value.toFixed(1)}`;
 }
 
 function shuffle<T>(items: T[], seed: number): T[] {
