@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import BurnPanel from "./components/BurnPanel";
 import ChokerPanel from "./components/ChokerPanel";
 import GpuWorkloadPanel from "./components/GpuWorkloadPanel";
@@ -16,11 +16,13 @@ import {
   fetchMachines,
   fetchWorkloadScenarios,
   fetchWorkloadStatus,
+  fetchWaveformAssignments,
   fetchWaveforms,
-  openEventSocket
+  openEventSocket,
+  saveWaveformAssignments
 } from "./api/client";
 import { AppStateContext, initialState, reducer } from "./state/AppState";
-import type { WsEvent } from "./types";
+import type { WaveformAssignments, WsEvent } from "./types";
 
 interface Toast {
   id: number;
@@ -35,6 +37,9 @@ export default function App() {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [theme, setTheme] = useState<ThemeMode>(() => getInitialTheme());
   const [tab, setTab] = useState<TabId>(() => getInitialTab());
+  // Per-machine waveform choices are saved on the server; undefined until loaded,
+  // so the empty initial state never overwrites what was saved.
+  const savedAssignments = useRef<string | undefined>(undefined);
   const [connectingAll, setConnectingAll] = useState(false);
   const [disconnectingAll, setDisconnectingAll] = useState(false);
 
@@ -262,12 +267,46 @@ export default function App() {
         gpuWorkloadJobs.forEach((job) => {
           dispatch({ type: "gpuWorkloadStarted", job });
         });
+
+        const saved = await fetchWaveformAssignments();
+        const waveformsByName = new Map(waveforms.map((waveform) => [waveform.name, waveform]));
+        const machineIds = new Set(machines.map((machine) => machine.id));
+        for (const [machineId, name] of Object.entries(saved.assignments)) {
+          const waveform = waveformsByName.get(name);
+          if (waveform && machineIds.has(machineId)) {
+            dispatch({ type: "setPerMachineWaveform", machineId, points: waveform.points, name });
+          }
+        }
+        dispatch({ type: "setUsePerMachineWaveform", value: saved.use_per_machine });
+        savedAssignments.current = serializeAssignments(saved);
       } catch (error) {
         addToast(extractErrorMessage(error), "error");
       }
     }
     void load();
   }, [addToast]);
+
+  useEffect(() => {
+    if (savedAssignments.current === undefined) {
+      return;
+    }
+    const current: WaveformAssignments = {
+      use_per_machine: state.usePerMachineWaveform,
+      assignments: state.perMachineWaveformNames
+    };
+    const serialized = serializeAssignments(current);
+    if (serialized === savedAssignments.current) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      saveWaveformAssignments(current)
+        .then((saved) => {
+          savedAssignments.current = serializeAssignments(saved);
+        })
+        .catch((error) => addToast(`Saving waveform assignments failed: ${extractErrorMessage(error)}`, "error"));
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [addToast, state.perMachineWaveformNames, state.usePerMachineWaveform]);
 
   useEffect(() => {
     return openEventSocket(
@@ -560,6 +599,13 @@ const TABS: Array<{ id: TabId; label: string }> = [
 ];
 
 const TAB_STORAGE_KEY = "burner-tab";
+
+function serializeAssignments(value: WaveformAssignments): string {
+  const assignments = Object.entries(value.assignments)
+    .filter(([, name]) => name)
+    .sort(([a], [b]) => a.localeCompare(b));
+  return JSON.stringify([value.use_per_machine, assignments]);
+}
 
 function getInitialTab(): TabId {
   try {

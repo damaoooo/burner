@@ -38,6 +38,7 @@ from profile_library import DEFAULT_RESOLUTION_MS, ProfileError, import_profiles
 from sampling_controller import SamplingConflictError, SamplingController, SamplingError
 from ssh_manager import SSHManager
 from update_controller import UpdateConflictError, UpdateController
+from waveform_assignments import ASSIGNMENTS_PATH, AssignmentError, load_assignments, save_assignments
 from waveform_store import WaveformError, WaveformExistsError, WaveformStore
 from workload_controller import (
     WorkloadConflictError,
@@ -49,6 +50,11 @@ from workload_controller import (
 class WaveformCreate(BaseModel):
     name: str
     points: list[tuple[float, float]]
+
+
+class WaveformAssignmentsPayload(BaseModel):
+    use_per_machine: bool
+    assignments: dict[str, str]
 
 
 class BurnMachinePayload(BaseModel):
@@ -336,6 +342,23 @@ async def save_waveform(payload: WaveformCreate):
     except WaveformExistsError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except WaveformError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/waveform-assignments")
+async def get_waveform_assignments():
+    try:
+        return load_assignments(ASSIGNMENTS_PATH)
+    except AssignmentError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.put("/api/waveform-assignments")
+async def put_waveform_assignments(payload: WaveformAssignmentsPayload):
+    known = {machine.id for machine in config_store.list_machines()}
+    try:
+        return save_assignments(ASSIGNMENTS_PATH, payload.use_per_machine, payload.assignments, known)
+    except AssignmentError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 

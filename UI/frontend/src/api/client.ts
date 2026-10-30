@@ -12,6 +12,7 @@ import type {
   MachineApiRecord,
   Point,
   ProfileLibrarySummary,
+  WaveformAssignments,
   WaveformInfo,
   WaveformSource,
   WorkloadGenerateRequest,
@@ -84,6 +85,16 @@ export async function saveWaveform(name: string, points: Point[]): Promise<Wavef
     }
   );
   return toWaveform(data);
+}
+
+export async function fetchWaveformAssignments(): Promise<WaveformAssignments> {
+  const { data } = await http.get<WaveformAssignments>("/waveform-assignments");
+  return data;
+}
+
+export async function saveWaveformAssignments(payload: WaveformAssignments): Promise<WaveformAssignments> {
+  const { data } = await http.put<WaveformAssignments>("/waveform-assignments", payload);
+  return data;
 }
 
 export async function fetchProfileSummary(): Promise<ProfileLibrarySummary> {

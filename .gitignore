@@ -61,3 +61,6 @@ third_party/gpu-burn/compare.ptx
 # Imported workload power profiles
 UI/profiles/*
 !UI/profiles/.gitkeep
+
+# Saved WebUI state
+UI/state/

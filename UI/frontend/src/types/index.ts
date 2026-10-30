@@ -77,6 +77,11 @@ export interface WaveformInfo {
   group?: string;
 }
 
+export interface WaveformAssignments {
+  use_per_machine: boolean;
+  assignments: Record<string, string>;
+}
+
 export interface ProfileLibrarySummary {
   imported: boolean;
   count: number;
