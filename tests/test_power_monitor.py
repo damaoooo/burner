@@ -31,7 +31,7 @@ def test_aggregator_sums_nodes_per_time_bin():
 
     rows = agg.finalize(now=100.5, settle=0.2)
 
-    assert rows == [(100.0, 30.0, 2), (100.1, 11.0, 1)]
+    assert rows == [(100.0, 30.0, 2, [10.0, 20.0]), (100.1, 11.0, 1, [11.0, None])]
     assert agg.latest == {"a": 11.0, "b": 20.0}
     assert agg.finalize(now=101.0, settle=0.2) == []
 
@@ -42,7 +42,7 @@ def test_aggregator_waits_for_missing_nodes_until_settled():
 
     assert agg.finalize(now=100.1, settle=0.5) == []
     agg.add("b", 100.0, 5.0)
-    assert agg.finalize(now=100.1, settle=0.5) == [(100.0, 15.0, 2)]
+    assert agg.finalize(now=100.1, settle=0.5) == [(100.0, 15.0, 2, [10.0, 5.0])]
 
 
 def test_aggregator_ignores_late_samples_for_finalized_bins():
@@ -64,7 +64,11 @@ def test_aggregator_history_and_csv_keep_only_recent_rows():
 
     history = agg.history()
     assert history[0][0] == pytest.approx(101.9)
-    assert history[-1] == (pytest.approx(102.9), 3.0, 2)
+    assert history[-1] == (pytest.approx(102.9), 3.0, 2, [1.0, 2.0])
+    assert [row[:3] for row in agg.history(seconds=0.15)] == [
+        (pytest.approx(102.8), 3.0, 2),
+        (pytest.approx(102.9), 3.0, 2),
+    ]
     lines = agg.to_csv().splitlines()
     assert lines[0] == "epoch_s,total_W,nodes,a,b"
     assert lines[-1] == "102.900,3.00,2,1.00,2.00"
@@ -150,7 +154,7 @@ def test_monitor_streams_totals_and_stops():
         await monitor.stop()
 
         samples = [row for event in events if event["event"] == "power_samples" for row in event["samples"]]
-        assert samples == [[1000000000.0, 15.0, 2], [1000000000.1, 18.0, 2]]
+        assert samples == [[1000000000.0, 15.0, 2, [10.0, 5.0]], [1000000000.1, 18.0, 2, [12.0, 6.0]]]
         assert not monitor.status()["running"]
         assert connections["a"].process.closed
         assert "sudo -n" in connections["a"].commands[0]

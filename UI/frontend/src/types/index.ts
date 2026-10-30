@@ -263,8 +263,8 @@ export interface PowerStatus {
   errors: Record<string, string>;
 }
 
-/** [epoch seconds, total watts, number of nodes in the sum] */
-export type PowerSample = [number, number, number];
+/** [epoch seconds, total watts, nodes in the sum, per-node watts in status.machines order (null = missing)] */
+export type PowerSample = [number, number, number, (number | null)[]?];
 
 export type WsEvent =
   | { event: "power_samples"; samples: PowerSample[]; latest: Record<string, number> }

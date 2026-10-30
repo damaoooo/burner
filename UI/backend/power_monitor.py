@@ -85,7 +85,7 @@ class PowerAggregator:
         self.latest: dict[str, float] = {}
         self._pending: dict[int, dict[str, float]] = {}
         self._last_key: int | None = None
-        self._rows: deque[tuple[float, float, int, dict[str, float]]] = deque()
+        self._rows: deque[tuple[float, float, int, list[float | None]]] = deque()
 
     def add(self, machine_id: str, t: float, watts: float) -> None:
         key = round(t * 1000)
@@ -94,8 +94,17 @@ class PowerAggregator:
         self._pending.setdefault(key, {})[machine_id] = watts
         self.latest[machine_id] = watts
 
-    def finalize(self, now: float, settle: float = SETTLE_SECONDS) -> list[tuple[float, float, int]]:
-        """Publish bins in time order once complete or older than ``settle``."""
+    def _per_node(self, values: dict[str, float]) -> list[float | None]:
+        return [round(values[m], 2) if m in values else None for m in self.machine_ids]
+
+    def finalize(
+        self, now: float, settle: float = SETTLE_SECONDS
+    ) -> list[tuple[float, float, int, list[float | None]]]:
+        """Publish bins in time order once complete or older than ``settle``.
+
+        Each row is (bin start, total W, nodes reporting, per-node W in
+        ``machine_ids`` order with None for a node that did not report).
+        """
         rows = []
         for key in sorted(self._pending):
             values = self._pending[key]
@@ -103,8 +112,8 @@ class PowerAggregator:
                 break
             del self._pending[key]
             self._last_key = key
-            row = (key / 1000, round(sum(values.values()), 2), len(values))
-            self._rows.append((*row, values))
+            row = (key / 1000, round(sum(values.values()), 2), len(values), self._per_node(values))
+            self._rows.append(row)
             rows.append(row)
         if self._rows:
             oldest = self._rows[-1][0] - self.keep_seconds - 1e-9
@@ -112,17 +121,17 @@ class PowerAggregator:
                 self._rows.popleft()
         return rows
 
-    def history(self, seconds: float | None = None) -> list[tuple[float, float, int]]:
+    def history(self, seconds: float | None = None) -> list[tuple[float, float, int, list[float | None]]]:
         rows = list(self._rows)
         if seconds is not None and rows:
-            rows = [row for row in rows if row[0] >= rows[-1][0] - seconds]
-        return [row[:3] for row in rows]
+            rows = [row for row in rows if row[0] >= rows[-1][0] - seconds - 1e-9]
+        return rows
 
     def to_csv(self) -> str:
         lines = [",".join(["epoch_s", "total_W", "nodes", *self.machine_ids])]
-        for t, total, count, values in self._rows:
-            per_node = [f"{values[m]:.2f}" if m in values else "" for m in self.machine_ids]
-            lines.append(",".join([f"{t:.3f}", f"{total:.2f}", str(count), *per_node]))
+        for t, total, count, per_node in self._rows:
+            cells = ["" if value is None else f"{value:.2f}" for value in per_node]
+            lines.append(",".join([f"{t:.3f}", f"{total:.2f}", str(count), *cells]))
         return "\n".join(lines) + "\n"
 
 
@@ -202,7 +211,7 @@ class PowerMonitor:
             "errors": dict(self._errors),
         }
 
-    def history(self, seconds: float | None = None) -> list[tuple[float, float, int]]:
+    def history(self, seconds: float | None = None) -> list[tuple[float, float, int, list[float | None]]]:
         return self._aggregator.history(seconds) if self._aggregator else []
 
     def to_csv(self) -> str:

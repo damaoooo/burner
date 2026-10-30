@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Chart as ChartJS,
   Decimation,
+  Legend,
   LinearScale,
   LineElement,
   PointElement,
@@ -21,13 +22,46 @@ import { useAppState } from "../state/AppState";
 import type { PowerSample, PowerStatus, WsEvent } from "../types";
 import { useChartTheme } from "./WaveformEditor";
 
-ChartJS.register(LinearScale, PointElement, LineElement, Tooltip, Decimation);
+ChartJS.register(LinearScale, PointElement, LineElement, Tooltip, Decimation, Legend);
 
 export const POWER_EVENT = "burner-power";
 
 const KEEP_SECONDS = 1800;
 const WINDOWS = [60, 180, 600, 1800];
 const INTERVALS = [50, 100, 250, 1000];
+const SHOWN_KEY = "burner-power-nodes";
+// Fixed categorical order (light / dark). A machine keeps its color and dash
+// whatever else is ticked; past 8 machines the dash pattern tells them apart.
+const NODE_COLORS = {
+  light: ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"],
+  dark: ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"]
+};
+const NODE_DASHES: number[][] = [[], [6, 4], [2, 3]];
+
+function nodeStyle(index: number, dark: boolean) {
+  const palette = dark ? NODE_COLORS.dark : NODE_COLORS.light;
+  return {
+    color: palette[index % palette.length],
+    dash: NODE_DASHES[Math.floor(index / palette.length) % NODE_DASHES.length]
+  };
+}
+
+function readShown(): string[] {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(SHOWN_KEY) ?? "[]");
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function isDarkTheme(): boolean {
+  const theme = document.documentElement.dataset.theme;
+  if (theme === "dark" || theme === "light") {
+    return theme === "dark";
+  }
+  return window.matchMedia("(prefers-color-scheme: dark)").matches;
+}
 
 interface Props {
   onToast: (message: string, kind?: "info" | "error" | "success") => void;
@@ -51,6 +85,15 @@ export default function PowerPanel({ onToast, visible }: Props) {
   const [intervalMs, setIntervalMs] = useState(100);
   const [fromZero, setFromZero] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [shown, setShown] = useState<string[]>(() => readShown());
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SHOWN_KEY, JSON.stringify(shown));
+    } catch {
+      // Remembering the selection is a convenience only.
+    }
+  }, [shown]);
 
   useEffect(() => {
     void fetchPowerHistory(KEEP_SECONDS)
@@ -110,6 +153,7 @@ export default function PowerPanel({ onToast, visible }: Props) {
     const watts = complete.map((row) => row[1]);
     const lastSecond = complete.filter((row) => row[0] >= end - 1).map((row) => row[1]);
     return {
+      rows: shown,
       complete,
       incomplete: shown.length - complete.length,
       now: average(lastSecond),
@@ -138,46 +182,51 @@ export default function PowerPanel({ onToast, visible }: Props) {
     [chartTheme, view]
   );
 
-  const options = useMemo<ChartOptions<"line">>(
-    () => ({
-      animation: false,
-      parsing: false,
-      normalized: true,
-      maintainAspectRatio: false,
-      interaction: { mode: "nearest", axis: "x", intersect: false },
-      plugins: {
-        legend: { display: false },
-        decimation: { enabled: true, algorithm: "min-max" },
-        tooltip: {
-          backgroundColor: chartTheme.tooltipBg,
-          borderColor: chartTheme.tooltipBorder,
-          borderWidth: 1,
-          titleColor: chartTheme.tooltipText,
-          bodyColor: chartTheme.tooltipText,
-          callbacks: {
-            title: (items) => (items.length ? formatClock(items[0].parsed.x ?? 0, true) : ""),
-            label: (item) => `${Math.round(item.parsed.y ?? 0)} W`
-          }
-        }
-      },
-      scales: {
-        x: {
-          type: "linear",
-          border: { color: chartTheme.axis },
-          grid: { color: chartTheme.grid },
-          ticks: { color: chartTheme.tick, maxTicksLimit: 8, callback: (value) => formatClock(Number(value)) }
-        },
-        y: {
-          beginAtZero: fromZero,
-          border: { color: chartTheme.axis },
-          grid: { color: chartTheme.grid },
-          title: { display: true, text: "Total CPU package power (W)", color: chartTheme.title },
-          ticks: { color: chartTheme.tick }
-        }
-      }
-    }),
+  const options = useMemo(
+    () => chartOptions(chartTheme, fromZero, "Total CPU package power (W)", false),
     [chartTheme, fromZero]
   );
+
+  const machineIds = useMemo(() => status?.machines ?? [], [status]);
+  const nodeData = useMemo<ChartData<"line", { x: number; y: number }[]>>(() => {
+    const dark = isDarkTheme();
+    return {
+      datasets: machineIds
+        .map((id, index) => ({ id, index }))
+        .filter(({ id }) => shown.includes(id))
+        .map(({ id, index }) => {
+          const style = nodeStyle(index, dark);
+          const points: { x: number; y: number }[] = [];
+          for (const row of view.rows) {
+            const value = row[3]?.[index];
+            if (value !== null && value !== undefined) {
+              points.push({ x: row[0], y: value });
+            }
+          }
+          return {
+            label: state.machines[id]?.config.name ?? id,
+            data: points,
+            borderColor: style.color,
+            backgroundColor: style.color,
+            borderDash: style.dash,
+            borderWidth: 1.5,
+            pointRadius: 0,
+            tension: 0
+          };
+        })
+    };
+    // chartTheme changes with the page theme, which changes the palette
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, shown, machineIds, state.machines, chartTheme]);
+
+  const nodeOptions = useMemo(
+    () => chartOptions(chartTheme, fromZero, "Per-machine CPU package power (W)", true),
+    [chartTheme, fromZero]
+  );
+
+  function toggleNode(id: string) {
+    setShown((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
+  }
 
   async function handleStart() {
     setBusy(true);
@@ -211,10 +260,12 @@ export default function PowerPanel({ onToast, visible }: Props) {
   const running = status?.running ?? false;
   const connected = Object.values(state.machines).filter((machine) => machine.connectionStatus === "connected").length;
   const errors = Object.entries(status?.errors ?? {});
-  const nodeRows = (status?.machines ?? []).map((id) => ({
+  const dark = isDarkTheme();
+  const nodeRows = machineIds.map((id, index) => ({
     id,
     name: state.machines[id]?.config.name ?? id,
-    watts: latest[id]
+    watts: latest[id],
+    style: nodeStyle(index, dark)
   }));
 
   return (
@@ -318,17 +369,91 @@ export default function PowerPanel({ onToast, visible }: Props) {
       )}
 
       {nodeRows.length > 0 && (
-        <div className="power-nodes">
-          {nodeRows.map((row) => (
-            <div className="power-node" key={row.id}>
-              <span>{row.name}</span>
-              <strong>{row.watts === undefined ? "-" : `${Math.round(row.watts)} W`}</strong>
+        <>
+          <div className="power-controls">
+            <strong>Per machine</strong>
+            <span className="muted">Tick machines to plot them below.</span>
+            <button type="button" className="secondary-button" onClick={() => setShown(machineIds)}>
+              All
+            </button>
+            <button type="button" className="secondary-button" onClick={() => setShown([])}>
+              None
+            </button>
+          </div>
+          <div className="power-nodes">
+            {nodeRows.map((row) => (
+              <label className={shown.includes(row.id) ? "power-node selected" : "power-node"} key={row.id}>
+                <input type="checkbox" checked={shown.includes(row.id)} onChange={() => toggleNode(row.id)} />
+                <svg className="power-swatch" width="22" height="8" aria-hidden="true">
+                  <line
+                    x1="1"
+                    y1="4"
+                    x2="21"
+                    y2="4"
+                    stroke={row.style.color}
+                    strokeWidth="2.5"
+                    strokeDasharray={row.style.dash.join(" ")}
+                  />
+                </svg>
+                <span>{row.name}</span>
+                <strong>{row.watts === undefined ? "-" : `${Math.round(row.watts)} W`}</strong>
+              </label>
+            ))}
+          </div>
+          {nodeData.datasets.length > 0 && (
+            <div className="chart-shell power-chart">
+              <Line data={nodeData} options={nodeOptions} />
             </div>
-          ))}
-        </div>
+          )}
+        </>
       )}
     </section>
   );
+}
+
+function chartOptions(
+  theme: ReturnType<typeof useChartTheme>,
+  fromZero: boolean,
+  yTitle: string,
+  legend: boolean
+): ChartOptions<"line"> {
+  return {
+    animation: false,
+    parsing: false,
+    normalized: true,
+    maintainAspectRatio: false,
+    interaction: { mode: "nearest", axis: "x", intersect: false },
+    plugins: {
+      legend: { display: legend, labels: { color: theme.tick, boxHeight: 2, usePointStyle: false } },
+      decimation: { enabled: true, algorithm: "min-max" },
+      tooltip: {
+        backgroundColor: theme.tooltipBg,
+        borderColor: theme.tooltipBorder,
+        borderWidth: 1,
+        titleColor: theme.tooltipText,
+        bodyColor: theme.tooltipText,
+        callbacks: {
+          title: (items) => (items.length ? formatClock(items[0].parsed.x ?? 0, true) : ""),
+          label: (item) => `${item.dataset.label ?? ""}: ${Math.round(item.parsed.y ?? 0)} W`
+        }
+      }
+    },
+    scales: {
+      x: {
+        type: "linear",
+        border: { color: theme.axis },
+        grid: { color: theme.grid },
+        ticks: { color: theme.tick, maxTicksLimit: 8, callback: (value) => formatClock(Number(value)) }
+      },
+      y: {
+        beginAtZero: fromZero,
+        border: { color: theme.axis },
+        grid: { color: theme.grid },
+        title: { display: true, text: yTitle, color: theme.title },
+        ticks: { color: theme.tick }
+      }
+    }
+  };
 }
 
 function Stat({ label, value, strong }: { label: string; value: number | undefined; strong?: boolean }) {
