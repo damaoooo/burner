@@ -1412,9 +1412,12 @@ button:disabled {
 }
 
 .modal {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 14px;
   width: min(480px, 100%);
+  max-height: calc(100vh - 40px);
+  max-height: calc(100dvh - 40px);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 18px;
@@ -1425,6 +1428,22 @@ button:disabled {
 .modal h3,
 .modal p {
   margin: 0;
+}
+
+/* Title and buttons stay put; anything between them scrolls inside the modal. */
+.modal > * {
+  flex-shrink: 0;
+}
+
+.modal > :not(h3):not(.modal-actions) {
+  flex-shrink: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.modal-summary {
+  color: var(--text-soft);
+  font-size: 14px;
 }
 
 .modal-message {

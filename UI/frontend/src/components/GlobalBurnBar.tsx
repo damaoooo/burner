@@ -238,6 +238,7 @@ export default function GlobalBurnBar({ onToast }: Props) {
         <div className="modal-backdrop" role="dialog" aria-modal="true">
           <div className="modal wide-modal">
             <h3>Confirm Schedule</h3>
+            <p className="modal-summary">{describePlan(pendingStart.planned)}</p>
             <ScheduleSummary planned={pendingStart.planned} />
             <div className="modal-actions">
               <button type="button" className="secondary-button" onClick={() => setPendingStart(null)}>
@@ -285,6 +286,16 @@ export default function GlobalBurnBar({ onToast }: Props) {
       )}
     </>
   );
+}
+
+function describePlan(planned: PlannedWindow[]): string {
+  if (planned.length === 0) {
+    return "No machines selected.";
+  }
+  const start = Math.min(...planned.map((item) => item.start));
+  const end = Math.max(...planned.map((item) => item.end));
+  const machines = `${planned.length} machine${planned.length === 1 ? "" : "s"}`;
+  return `${machines} · ${formatLocal(start)} → ${formatLocal(end)} · ${Math.round(end - start)} s`;
 }
 
 function ScheduleSummary({ planned }: { planned: PlannedWindow[] }) {
