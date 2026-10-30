@@ -50,6 +50,8 @@ class MockBurnBackend(BurnBackend):
 
 class LookbusyCpuBackend(BurnBackend):
     name = "cpu"
+    tool = "lookbusy"
+    build_script = "scripts/build_lookbusy.sh"
 
     def __init__(
         self,
@@ -89,36 +91,67 @@ class LookbusyCpuBackend(BurnBackend):
     def _ensure_started(self, initial_intensity: float) -> None:
         if not self.binary.exists():
             raise BackendError(
-                f"lookbusy binary not found at {self.binary}; run scripts/build_lookbusy.sh"
+                f"{self.tool} binary not found at {self.binary}; run {self.build_script}"
             )
         if self._process is not None:
             if self._process.poll() is not None:
-                raise BackendError("lookbusy exited unexpectedly")
+                raise BackendError(f"{self.tool} exited unexpectedly")
             return
 
-        self._tmpdir = tempfile.TemporaryDirectory(prefix="burner-lookbusy-")
+        self._tmpdir = tempfile.TemporaryDirectory(prefix=f"burner-{self.tool}-")
         self._control_file = Path(self._tmpdir.name) / "cpu_util_percent"
         self._control_file.write_text(
             f"{initial_intensity * 100.0:.6f}\n",
             encoding="utf-8",
         )
-        command = [
-            str(self.binary),
-            "-q",
-            "-c",
-            "1",
-            "--cpu-util-file",
-            str(self._control_file),
-        ]
         ncpus = self.ncpus if self.ncpus is not None else _default_cpu_count()
-        if ncpus is not None:
-            command.extend(["-n", str(ncpus)])
         self._process = subprocess.Popen(
-            command,
+            self._command(self._control_file, ncpus),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             preexec_fn=os.setsid,
         )
+
+
+    def _command(self, control_file: Path, ncpus: int | None) -> list[str]:
+        command = [str(self.binary), "-q", "-c", "1", "--cpu-util-file", str(control_file)]
+        if ncpus is not None:
+            command.extend(["-n", str(ncpus)])
+        return command
+
+
+class PwmCpuBackend(LookbusyCpuBackend):
+    """CPU load from native/cpu_pwm: every CPU busy and idle in step on a
+    wall-clock aligned grid, so power at a given level does not depend on how
+    the load got there (lookbusy's per-process cycles drift apart)."""
+
+    tool = "cpu_pwm"
+    build_script = "scripts/build_cpu_pwm.sh"
+
+    def __init__(
+        self,
+        binary: Path | None = None,
+        ncpus: int | None = None,
+        interval_ms: int = 10,
+        kernel: str = "fma",
+    ):
+        super().__init__(binary or PROJECT_ROOT / "native" / "cpu_pwm", ncpus)
+        self.interval_ms = interval_ms
+        self.kernel = kernel
+
+    def _command(self, control_file: Path, ncpus: int | None) -> list[str]:
+        command = [
+            str(self.binary),
+            "--util-file",
+            str(control_file),
+            "--interval-ms",
+            str(self.interval_ms),
+            "--kernel",
+            self.kernel,
+        ]
+        if ncpus is not None:
+            command.extend(["-n", str(ncpus)])
+        return command
 
 
 def _default_cpu_count() -> int | None:

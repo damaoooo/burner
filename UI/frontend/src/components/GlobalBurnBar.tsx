@@ -172,6 +172,7 @@ export default function GlobalBurnBar({ onToast }: Props) {
         duration: `${durationSeconds}s`,
         period,
         tick_seconds: state.appliedSamplingMs / 1000,
+        cpu_engine: state.cpuEngine,
         machines
       },
       planned
@@ -305,7 +306,8 @@ function describeWaveformSource(state: AppState): { text: string; kind: "profile
   const connected = enabled.filter((machine) => machine.connectionStatus === "connected");
   const machines = connected.length > 0 ? connected : enabled;
   const start = state.runMode === "schedule" ? "starts at the scheduled time" : "all start together ~5 s after click";
-  const timing = `period ${state.period || "?"} s · duration ${state.duration || "?"} s · ${start}`;
+  const engine = state.cpuEngine === "pwm" ? "cpu_pwm" : "lookbusy";
+  const timing = `period ${state.period || "?"} s · duration ${state.duration || "?"} s · ${engine} · ${start}`;
   if (machines.length === 0) {
     return { text: `No machines enabled · ${timing}`, kind: "global" };
   }

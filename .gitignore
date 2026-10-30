@@ -47,6 +47,7 @@ stamp-h1
 
 # Project third-party binaries and generated CUDA artifacts
 third_party/lookbusy/lookbusy
+native/cpu_pwm
 third_party/lookbusy/lb.o
 third_party/gpu-burn/gpu_burn
 third_party/gpu-burn/gpu_burn-drv.o

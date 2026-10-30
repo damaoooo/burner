@@ -108,6 +108,7 @@ def test_sampling_controller_runs_reset_pull_scp_then_builds():
         assert "git submodule sync --recursive" in ssh.process_commands[2]
         assert "git submodule update --init --recursive --force" in ssh.process_commands[2]
         assert "BURNER_CONTROL_INTERVAL_MS=250 bash scripts/build_lookbusy.sh" in remote_commands
+        assert "bash scripts/build_cpu_pwm.sh" in remote_commands
         assert "BURNER_CONTROL_INTERVAL_MS=250 bash scripts/build_gpu_burn.sh" in remote_commands
         assert {item[1] for item in transfer.copies} == {
             f"/remote/burner/{relative}" for relative in SOURCE_FILES

@@ -18,10 +18,14 @@ DEFAULT_SAMPLING_MS = 100
 SOURCE_FILES: tuple[str, ...] = (
     "scripts/build_lookbusy.sh",
     "scripts/build_gpu_burn.sh",
+    "scripts/build_cpu_pwm.sh",
     "third_party/lookbusy/lb.c",
     "third_party/gpu-burn/gpu_burn-drv.cpp",
+    "native/cpu_pwm.c",
     "warpper/burner_backends.py",
     "warpper/burner_cli.py",
+    "warpper/burner_core.py",
+    "warpper/curve.py",
 )
 
 Broadcast = Callable[[dict[str, object]], Awaitable[None]]
@@ -183,7 +187,7 @@ class SamplingController:
         sampling_ms: int,
         has_gpu: bool,
     ) -> int:
-        steps = ["reset", "pull", "submodules", "sync", "build_cpu"]
+        steps = ["reset", "pull", "submodules", "sync", "build_cpu", "build_pwm"]
         if has_gpu:
             steps.append("build_gpu")
         total = len(steps)
@@ -225,13 +229,22 @@ class SamplingController:
                 completed=4,
                 total=total,
             )
+            # cpu_pwm takes its interval at run time, so it needs no sampling flag.
+            await self._run_remote_step(
+                machine_id,
+                sampling_ms,
+                step="build_pwm",
+                command="bash scripts/build_cpu_pwm.sh",
+                completed=5,
+                total=total,
+            )
             if has_gpu:
                 await self._run_remote_step(
                     machine_id,
                     sampling_ms,
                     step="build_gpu",
                     command=build_command(sampling_ms, "bash scripts/build_gpu_burn.sh"),
-                    completed=5,
+                    completed=6,
                     total=total,
                 )
             await self._finish_machine(machine_id, sampling_ms, exit_code=0)

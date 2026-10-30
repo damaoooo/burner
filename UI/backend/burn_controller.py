@@ -23,6 +23,7 @@ _PERIOD_RE = re.compile(r"^([0-9]+(?:\.[0-9]+)?|\.[0-9]+)([smh])$")
 
 Broadcast = Callable[[dict[str, object]], Awaitable[None]]
 UTC = timezone.utc
+CPU_ENGINES = ("lookbusy", "pwm")
 # "delayed" mode starts every machine together this long after the waveforms
 # are on the machines: enough to launch burner over SSH and prewarm (2 s).
 DELAYED_START_LEAD_SECONDS = 5.0
@@ -113,10 +114,13 @@ class BurnController:
         machines: list[MachineBurnRequest],
         start_time_utc: str | None = None,
         tick_seconds: float = 0.1,
+        cpu_engine: str = "lookbusy",
     ) -> list[JobInfo]:
         targets = [machine for machine in machines if machine.enabled]
         if not targets:
             raise BurnError("at least one machine must be enabled")
+        if cpu_engine not in CPU_ENGINES:
+            raise BurnError(f"cpu_engine must be one of {', '.join(CPU_ENGINES)}")
         if sync_mode not in ("immediate", "delayed", "scheduled"):
             raise BurnError("sync_mode must be immediate, delayed, or scheduled")
 
@@ -156,7 +160,7 @@ class BurnController:
             ]
 
         jobs = await asyncio.gather(
-            *[self._start_single(plan, duration, period, tick_seconds) for plan in plans]
+            *[self._start_single(plan, duration, period, tick_seconds, cpu_engine) for plan in plans]
         )
         return list(jobs)
 
@@ -242,6 +246,7 @@ class BurnController:
         duration: str,
         period: str,
         tick_seconds: float,
+        cpu_engine: str = "lookbusy",
     ) -> JobInfo:
         target = plan.target
         machine = self._config.get_machine(target.id)
@@ -254,6 +259,8 @@ class BurnController:
         relative_waveform = f"./ui_waveforms/{plan.job_id}.csv"
         args.extend(["-f", relative_waveform, "-t", duration, "-p", period])
         args.extend(["--tick", format_float(tick_seconds)])
+        if target.burn_cpu and cpu_engine != "lookbusy":
+            args.extend(["--cpu-engine", cpu_engine])
         if plan.start_time_utc is not None:
             args.extend(["--start", iso_z(plan.start_time_utc)])
 

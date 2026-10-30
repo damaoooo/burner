@@ -279,6 +279,68 @@ def test_cpu_backend_writes_initial_intensity_before_start(tmp_path, monkeypatch
     assert calls["initial"] == "50.000000\n"
 
 
+def test_pwm_cpu_backend_runs_cpu_pwm_with_interval_and_kernel(tmp_path, monkeypatch):
+    binary = tmp_path / "cpu_pwm"
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    calls = {}
+
+    class FakeProcess:
+        pid = 123
+
+        def poll(self):
+            return None
+
+    def fake_popen(command, **kwargs):
+        calls["command"] = command
+        calls["initial"] = Path(command[command.index("--util-file") + 1]).read_text(encoding="utf-8")
+        return FakeProcess()
+
+    monkeypatch.setattr(burner_backends.os, "cpu_count", lambda: 64)
+    monkeypatch.setattr(burner_backends.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(burner_backends, "_terminate_process_group", lambda process, timeout=5: None)
+
+    backend = burner_backends.PwmCpuBackend(binary=binary, interval_ms=10, kernel="fma")
+    backend.set_intensity(0.25, 0.0)
+    backend.stop()
+
+    command = calls["command"]
+    assert command[0] == str(binary)
+    assert command[command.index("-n") + 1] == "64"
+    assert command[command.index("--interval-ms") + 1] == "10"
+    assert command[command.index("--kernel") + 1] == "fma"
+    assert calls["initial"] == "25.000000\n"
+
+
+def test_pwm_cpu_backend_reports_missing_binary(tmp_path):
+    backend = burner_backends.PwmCpuBackend(binary=tmp_path / "missing")
+
+    with pytest.raises(burner_backends.BackendError, match="build_cpu_pwm.sh"):
+        backend.prepare()
+
+
+@pytest.mark.parametrize(("tick", "expected"), [(0.01, 10), (0.1, 100), (0.0004, 1), (5.0, 1000)])
+def test_cli_pwm_engine_uses_tick_as_interval(tick, expected):
+    from warpper.burner_cli import _build_backends
+
+    args = build_parser().parse_args(
+        ["--cpu", "-f", "c.csv", "-t", "1s", "-p", "1s", "--tick", str(tick), "--cpu-engine", "pwm"]
+    )
+    (backend,) = _build_backends(args)
+
+    assert isinstance(backend, burner_backends.PwmCpuBackend)
+    assert backend.interval_ms == expected
+    assert backend.kernel == "fma"
+
+
+def test_cli_defaults_to_lookbusy_engine():
+    from warpper.burner_cli import _build_backends
+
+    args = build_parser().parse_args(["--cpu", "-f", "c.csv", "-t", "1s", "-p", "1s"])
+    (backend,) = _build_backends(args)
+
+    assert type(backend) is burner_backends.LookbusyCpuBackend
+
+
 def test_cpu_backend_defaults_to_all_logical_cpus(tmp_path, monkeypatch):
     binary = tmp_path / "lookbusy"
     binary.write_text("#!/bin/sh\n", encoding="utf-8")

@@ -220,6 +220,7 @@ export interface AppState {
   scheduledStartLocal: string;
   samplingMs: string;
   appliedSamplingMs: number;
+  cpuEngine: CpuEngine;
   samplingBuild: SamplingBuildState;
   burnJobs: Record<string, JobInfo>;
   workloadScenarios: WorkloadScenarioSummary[];
@@ -395,8 +396,11 @@ export type WsEvent =
       message?: string;
     };
 
+export type CpuEngine = "lookbusy" | "pwm";
+
 export interface BurnStartRequest {
   sync_mode: SyncMode;
+  cpu_engine?: CpuEngine;
   start_time_utc?: string;
   duration: string;
   period: string;

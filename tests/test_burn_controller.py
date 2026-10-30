@@ -72,6 +72,37 @@ def request(machine_id, delay=0.0):
     )
 
 
+def test_cpu_engine_is_passed_to_burner():
+    async def run_test():
+        ssh = FakeSSH()
+        controller = BurnController(FakeConfig(), ssh, SlowTransfer(0), FakeWaveforms(), noop_broadcast)
+
+        jobs = await controller.start_burn(
+            sync_mode="delayed",
+            duration="15s",
+            period="15s",
+            machines=[request("node-1")],
+            tick_seconds=0.01,
+            cpu_engine="pwm",
+        )
+        for job in jobs:
+            job.completion_task.cancel()
+
+        launch = next(cmd for _, cmd in ssh.commands if "./burner" in cmd)
+        assert "--cpu-engine pwm" in launch
+
+        with pytest.raises(Exception, match="cpu_engine"):
+            await controller.start_burn(
+                sync_mode="delayed",
+                duration="15s",
+                period="15s",
+                machines=[request("node-2")],
+                cpu_engine="turbo",
+            )
+
+    asyncio.run(run_test())
+
+
 def test_delayed_start_is_measured_from_after_the_waveform_copy():
     async def run_test():
         transfer = SlowTransfer(seconds=0.4)

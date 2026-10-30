@@ -12,6 +12,7 @@ from .burner_backends import (
     DutyCycleGpuBackend,
     LookbusyCpuBackend,
     MockBurnBackend,
+    PwmCpuBackend,
 )
 from .burner_core import run_schedule, write_events_log
 from .curve import CurveFormatError, LoadCurve
@@ -31,6 +32,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("-p", "--period", required=True, help="curve period, e.g. 60s")
     parser.add_argument("-s", "--start", help="UTC start time, e.g. 2026-05-10T12:00:00Z")
     parser.add_argument("--tick", type=float, default=DEFAULT_TICK, help="scheduler tick seconds")
+    parser.add_argument(
+        "--cpu-engine",
+        choices=("lookbusy", "pwm"),
+        default="lookbusy",
+        help="CPU load generator: lookbusy, or pwm (native/cpu_pwm, all CPUs in step; interval = tick)",
+    )
+    parser.add_argument(
+        "--cpu-kernel",
+        choices=("fma", "int"),
+        default="fma",
+        help="busy loop for --cpu-engine pwm: fma (vector multiply-add, more power) or int",
+    )
     parser.add_argument("--mock-backend", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-sleep", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--log-schedule", help=argparse.SUPPRESS)
@@ -104,7 +117,14 @@ def main(argv: list[str] | None = None) -> int:
 def _build_backends(args: argparse.Namespace):
     backends = []
     if args.cpu:
-        backends.append(MockBurnBackend("cpu") if args.mock_backend else LookbusyCpuBackend())
+        if args.mock_backend:
+            backends.append(MockBurnBackend("cpu"))
+        elif args.cpu_engine == "pwm":
+            # cpu_pwm takes whole milliseconds between 1 and 1000.
+            interval_ms = min(1000, max(1, round(args.tick * 1000)))
+            backends.append(PwmCpuBackend(interval_ms=interval_ms, kernel=args.cpu_kernel))
+        else:
+            backends.append(LookbusyCpuBackend())
     if args.gpu:
         backends.append(MockBurnBackend("gpu") if args.mock_backend else DutyCycleGpuBackend())
     return backends

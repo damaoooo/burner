@@ -1,5 +1,6 @@
 import { createContext, useContext, type Dispatch } from "react";
 import type {
+  CpuEngine,
   AppState,
   ConnectionStatus,
   GpuWorkloadJobInfo,
@@ -76,7 +77,8 @@ export type Action =
   | { type: "appendUpdateLog"; machineId: string; line: string }
   | { type: "setUpdateDone"; machineId: string; exitCode: number }
   | { type: "setUpdateRunning"; machineId: string }
-  | { type: "setWsConnected"; value: boolean };
+  | { type: "setWsConnected"; value: boolean }
+  | { type: "setCpuEngine"; value: CpuEngine };
 
 export const initialState: AppState = {
   machines: {},
@@ -92,6 +94,7 @@ export const initialState: AppState = {
   scheduledStartLocal: "",
   samplingMs: "100",
   appliedSamplingMs: 100,
+  cpuEngine: readCpuEngine(),
   samplingBuild: {
     running: false,
     targetMachineIds: [],
@@ -239,6 +242,13 @@ export function reducer(state: AppState, action: Action): AppState {
         runMode: action.value,
         scheduledStartLocal: action.scheduledStartLocal ?? state.scheduledStartLocal
       };
+    case "setCpuEngine":
+      try {
+        window.localStorage.setItem(CPU_ENGINE_KEY, action.value);
+      } catch {
+        // Remembering the engine is a convenience only.
+      }
+      return { ...state, cpuEngine: action.value };
     case "setBurnParams":
       return {
         ...state,
@@ -706,6 +716,16 @@ export function reducer(state: AppState, action: Action): AppState {
 
 function machineHasGpu(record: MachineApiRecord): boolean {
   return record.gpu_tdp > 0 || ((record.hw_info?.gpus.length ?? 0) > 0);
+}
+
+const CPU_ENGINE_KEY = "burner-cpu-engine";
+
+function readCpuEngine(): CpuEngine {
+  try {
+    return window.localStorage.getItem(CPU_ENGINE_KEY) === "pwm" ? "pwm" : "lookbusy";
+  } catch {
+    return "lookbusy";
+  }
 }
 
 export function normalizePoints(points: Point[]): Point[] {

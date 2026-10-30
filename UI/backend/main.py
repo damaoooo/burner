@@ -86,6 +86,7 @@ class BurnStartPayload(BaseModel):
     duration: str
     period: str
     tick_seconds: float = 0.1
+    cpu_engine: Literal["lookbusy", "pwm"] = "lookbusy"
     machines: list[BurnMachinePayload]
 
 
@@ -482,6 +483,7 @@ async def start_burn(payload: BurnStartPayload):
             machines,
             payload.start_time_utc,
             payload.tick_seconds,
+            cpu_engine=payload.cpu_engine,
         )
     except BurnOverlapError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

@@ -5,7 +5,7 @@ import ProfileLibrary from "./ProfileLibrary";
 import WaveformEditor from "./WaveformEditor";
 import WaveformSelector from "./WaveformSelector";
 import { useAppState } from "../state/AppState";
-import type { MachineState, Point, WaveformInfo } from "../types";
+import type { CpuEngine, MachineState, Point, WaveformInfo } from "../types";
 
 interface Props {
   onToast: (message: string, kind?: "info" | "error" | "success") => void;
@@ -133,6 +133,20 @@ export default function BurnPanel({ onToast }: Props) {
               value={state.period}
               onChange={(event) => dispatch({ type: "setBurnParams", period: event.target.value })}
             />
+            <label className="label" htmlFor="cpu-engine-input">
+              CPU engine
+            </label>
+            <select
+              id="cpu-engine-input"
+              className="field"
+              disabled={samplingRunning}
+              value={state.cpuEngine}
+              title="cpu_pwm keeps every CPU busy and idle in step, so power at a given level is repeatable"
+              onChange={(event) => dispatch({ type: "setCpuEngine", value: event.target.value as CpuEngine })}
+            >
+              <option value="lookbusy">lookbusy</option>
+              <option value="pwm">cpu_pwm (in-step, FMA)</option>
+            </select>
             {state.runMode === "schedule" && (
               <>
                 <label className="label" htmlFor="scheduled-start-input">
