@@ -1435,7 +1435,7 @@ button:disabled {
   flex-shrink: 0;
 }
 
-.modal > :not(h3):not(.modal-actions) {
+.modal > :not(h3):not(.modal-actions):not(.modal-summary) {
   flex-shrink: 1;
   min-height: 0;
   overflow-y: auto;
