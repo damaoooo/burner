@@ -40,6 +40,56 @@ def test_generate_schedule_uses_curve_and_tick(tmp_path):
     ]
 
 
+def test_generate_schedule_can_start_part_way_through(tmp_path):
+    curve = LoadCurve.from_csv(sine_curve_path(tmp_path))
+
+    schedule = list(generate_schedule(curve, duration=1.0, period=1.0, tick=0.25, start_elapsed=0.6))
+
+    assert schedule == [(0.75, pytest.approx(0.0))]
+
+
+def test_run_schedule_start_elapsed_skips_ahead(tmp_path):
+    curve = LoadCurve.from_csv(sine_curve_path(tmp_path))
+    cpu = MockBurnBackend("cpu")
+
+    run_schedule(curve, duration=1.0, period=1.0, tick=0.25, backends=[cpu], real_time=False, start_elapsed=0.5)
+
+    assert [event.elapsed for event in cpu.events] == pytest.approx([0.5, 0.75])
+    assert [event.intensity for event in cpu.events] == pytest.approx([0.5, 0.0])
+
+
+def test_burner_cli_late_start_keeps_phase(tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    log_path = tmp_path / "schedule.csv"
+    start = datetime.now(timezone.utc) - timedelta(seconds=30)
+
+    result = run_burner_cli(
+        "--cpu",
+        "-f",
+        str(sine_curve_path(tmp_path)),
+        "-t",
+        "60s",
+        "-p",
+        "1s",
+        "--tick",
+        "0.25",
+        "--start",
+        start.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+        "--mock-backend",
+        "--no-sleep",
+        "--log-schedule",
+        str(log_path),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "late" in result.stderr
+    rows = log_path.read_text(encoding="utf-8").splitlines()[1:]
+    first_elapsed = float(rows[0].split(",")[1])
+    assert 30.0 <= first_elapsed < 35.0
+    assert float(rows[-1].split(",")[1]) == pytest.approx(59.75)
+
+
 def test_burner_cli_default_tick_is_100ms():
     args = build_parser().parse_args(
         ["--cpu", "-f", "curve.csv", "-t", "1s", "-p", "1s"]

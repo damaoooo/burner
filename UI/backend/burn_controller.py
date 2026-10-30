@@ -7,7 +7,7 @@ import shlex
 import time
 import uuid
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
@@ -23,6 +23,9 @@ _PERIOD_RE = re.compile(r"^([0-9]+(?:\.[0-9]+)?|\.[0-9]+)([smh])$")
 
 Broadcast = Callable[[dict[str, object]], Awaitable[None]]
 UTC = timezone.utc
+# "delayed" mode starts every machine together this long after the waveforms
+# are on the machines: enough to launch burner over SSH and prewarm (2 s).
+DELAYED_START_LEAD_SECONDS = 5.0
 
 
 class BurnError(RuntimeError):
@@ -131,7 +134,7 @@ class BurnController:
 
         base_time: datetime | None = None
         if sync_mode == "delayed":
-            base_time = datetime.now(UTC) + timedelta(seconds=5)
+            base_time = datetime.now(UTC) + timedelta(seconds=DELAYED_START_LEAD_SECONDS)
         elif sync_mode == "scheduled":
             base_time = parse_utc_start(start_time_utc)
             if base_time <= datetime.now(UTC):
@@ -140,6 +143,17 @@ class BurnController:
         plans = self._build_plans(sync_mode, targets, duration_seconds, base_time)
         self._check_overlaps(plans)
         await asyncio.gather(*(self._copy_waveform(plan) for plan in plans))
+        if sync_mode == "delayed" and base_time is not None:
+            # Copying to many machines eats into the lead; restart the clock now.
+            shift = datetime.now(UTC) + timedelta(seconds=DELAYED_START_LEAD_SECONDS) - base_time
+            plans = [
+                replace(
+                    plan,
+                    start_time_utc=plan.start_time_utc + shift,
+                    started_at=plan.started_at + shift.total_seconds(),
+                )
+                for plan in plans
+            ]
 
         jobs = await asyncio.gather(
             *[self._start_single(plan, duration, period, tick_seconds) for plan in plans]

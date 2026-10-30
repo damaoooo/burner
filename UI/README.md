@@ -84,4 +84,9 @@ It then rebuilds CPU support and, when GPU hardware is detected, GPU support.
 
 The per-machine burn action starts `./burner` through the configured Conda environment, but it prefers the environment `bin/` directory directly instead of `conda run`. This avoids per-machine `conda run` startup overhead during realtime starts. If the environment path cannot be found, it falls back to `conda run`.
 
+Realtime starts use the delayed mode: every machine gets the same `--start`
+time, 5 s after the waveforms have been copied, so curves stay in phase
+across machines. If a machine still launches after that time, `./burner`
+skips ahead on its curve instead of starting from the beginning.
+
 For delayed and scheduled starts, `./burner --start` prewarms selected backends at 0% load shortly before the planned start time. This reduces GPU initialization skew before the first non-zero load update.

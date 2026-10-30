@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import math
 import time
 from pathlib import Path
 from typing import Iterable, Iterator
@@ -14,7 +15,13 @@ def generate_schedule(
     duration: float,
     period: float,
     tick: float,
+    start_elapsed: float = 0.0,
 ) -> Iterator[tuple[float, float]]:
+    """Yield (elapsed, intensity) every ``tick`` seconds.
+
+    ``start_elapsed`` skips the steps before it, so a late start resumes on
+    the same tick grid and curve phase as an on-time one.
+    """
     if duration <= 0:
         raise ValueError("duration must be greater than 0")
     if period <= 0:
@@ -22,7 +29,7 @@ def generate_schedule(
     if tick <= 0:
         raise ValueError("tick must be greater than 0")
 
-    step = 0
+    step = max(0, math.ceil(start_elapsed / tick - 1e-9))
     while True:
         elapsed = step * tick
         if elapsed >= duration:
@@ -38,11 +45,12 @@ def run_schedule(
     tick: float,
     backends: Iterable[BurnBackend],
     real_time: bool = True,
+    start_elapsed: float = 0.0,
 ) -> None:
     backends = list(backends)
-    started_at = time.monotonic()
+    started_at = time.monotonic() - start_elapsed
     try:
-        for elapsed, intensity in generate_schedule(curve, duration, period, tick):
+        for elapsed, intensity in generate_schedule(curve, duration, period, tick, start_elapsed):
             if real_time:
                 _sleep_until(started_at + elapsed)
             for backend in backends:

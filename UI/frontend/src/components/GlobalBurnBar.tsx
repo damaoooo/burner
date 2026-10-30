@@ -117,7 +117,7 @@ export default function GlobalBurnBar({ onToast }: Props) {
       return undefined;
     }
 
-    const syncMode = requestSyncMode(state.runMode, selected);
+    const syncMode = requestSyncMode(state.runMode);
     const startTimeUtc = syncMode === "scheduled" ? toUtcIso(state.scheduledStartLocal) : undefined;
     if (syncMode === "scheduled" && !startTimeUtc) {
       onToast("Choose a scheduled start time in the future.", "error");
@@ -304,7 +304,8 @@ function describeWaveformSource(state: AppState): { text: string; kind: "profile
   const enabled = Object.values(state.machines).filter((machine) => machine.burnEnabled);
   const connected = enabled.filter((machine) => machine.connectionStatus === "connected");
   const machines = connected.length > 0 ? connected : enabled;
-  const timing = `period ${state.period || "?"} s · duration ${state.duration || "?"} s`;
+  const start = state.runMode === "schedule" ? "starts at the scheduled time" : "all start together ~5 s after click";
+  const timing = `period ${state.period || "?"} s · duration ${state.duration || "?"} s · ${start}`;
   if (machines.length === 0) {
     return { text: `No machines enabled · ${timing}`, kind: "global" };
   }
@@ -410,11 +411,14 @@ function baseStartSeconds(syncMode: string, scheduledLocal: string): number | un
   return parsed / 1000;
 }
 
-function requestSyncMode(runMode: RunMode, selected: MachineState[]): SyncMode {
+function requestSyncMode(runMode: RunMode): SyncMode {
   if (runMode === "schedule") {
     return "scheduled";
   }
-  return selected.some((machine) => Math.max(0, machine.delaySeconds) > 0) ? "delayed" : "immediate";
+  // Realtime still starts every machine at one shared instant (a few seconds
+  // after the click) so all curves stay in phase; "immediate" would let each
+  // machine start whenever its SSH command lands.
+  return "delayed";
 }
 
 function machineHasGpu(machine: MachineState): boolean {

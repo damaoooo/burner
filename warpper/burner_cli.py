@@ -69,6 +69,11 @@ def main(argv: list[str] | None = None) -> int:
                 _prepare_backends(backends)
                 prepared = True
             _wait_until(start_time)
+        start_elapsed = _late_seconds(start_time)
+        if start_elapsed > 0:
+            # Launched after the shared start time (slow SSH, busy host): skip
+            # ahead so this machine stays in phase with the others.
+            print(f"burner: started {start_elapsed:.3f} s late; skipping ahead to keep phase", file=sys.stderr)
         run_schedule(
             curve=curve,
             duration=duration,
@@ -76,6 +81,7 @@ def main(argv: list[str] | None = None) -> int:
             tick=args.tick,
             backends=backends,
             real_time=not args.no_sleep,
+            start_elapsed=start_elapsed,
         )
         if args.log_schedule:
             events = []
@@ -102,6 +108,14 @@ def _build_backends(args: argparse.Namespace):
     if args.gpu:
         backends.append(MockBurnBackend("gpu") if args.mock_backend else DutyCycleGpuBackend())
     return backends
+
+
+def _late_seconds(start_time: datetime | None) -> float:
+    if start_time is None:
+        return 0.0
+    # Under 1 ms is wait/scheduling jitter, not a late launch.
+    late = (datetime.now(timezone.utc) - start_time).total_seconds()
+    return late if late > 0.001 else 0.0
 
 
 def _wait_until(start_time: datetime) -> None:

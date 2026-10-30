@@ -60,9 +60,11 @@ python scripts/import_profiles.py /path/to/workload_profiles.csv --resolution-ms
 - Short profile steps need a fast control loop. Apply a sampling time of at
   most twice the import resolution (20 ms for the default 10 ms import); the
   panel warns when the applied sampling time is slower.
-- Use **Schedule** or delayed start so all machines share one start time;
-  profiles that move together in the source data then move together on the
-  machines.
+- Every start shares one start time across machines, so profiles that move
+  together in the source data move together on the machines. **Realtime**
+  starts all machines together about 5 s after the click (measured from when
+  the waveforms have been copied); **Schedule** starts them at the chosen
+  local time. A machine that launches late skips ahead to stay in phase.
 
 Burn intensity sets CPU utilization through `lookbusy`, not watts. Power at a
 given utilization depends on the machine, so measure with `./watcher` if the
