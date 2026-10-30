@@ -31,7 +31,9 @@ fi
 
 echo "Building lookbusy with BURNER_CONTROL_INTERVAL_MS=${CONTROL_INTERVAL_MS}"
 
-if ! CFLAGS="${CFLAGS:-} ${INTERVAL_CFLAGS}" make -B lookbusy; then
+# Pass CFLAGS as a make argument: the configured Makefile assigns CFLAGS,
+# which would override a CFLAGS environment variable and drop the interval.
+if ! make -B lookbusy CFLAGS="-g -O2 ${CFLAGS:-} ${INTERVAL_CFLAGS}"; then
   echo "lookbusy make failed; falling back to direct gcc build." >&2
   if [[ ! -f config.h ]]; then
     echo "config.h is missing; cannot use direct gcc fallback." >&2

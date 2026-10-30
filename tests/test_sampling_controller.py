@@ -1,4 +1,7 @@
 import asyncio
+import os
+import shutil
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,6 +17,7 @@ from sampling_controller import (  # noqa: E402
     SamplingController,
     SamplingError,
     build_command,
+    git_only,
     reset_command,
     validate_sampling_ms,
 )
@@ -43,6 +47,44 @@ def test_reset_command_cleans_main_repo_and_submodules():
     assert "git reset --hard HEAD" in command
     assert "git clean -fd" in command
     assert "git submodule foreach --recursive" in command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [reset_command(), "git pull --recurse-submodules"],
+)
+def test_git_only_skips_outside_a_git_checkout(tmp_path, command):
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("bash is not available")
+
+    result = subprocess.run(
+        [bash, "-c", git_only("reset", command)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "GIT_CEILING_DIRECTORIES": str(tmp_path.parent)},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "not a git checkout; skipping reset" in result.stdout
+
+
+def test_sampling_controller_guards_git_steps():
+    async def run_test():
+        ssh = FakeSSH()
+
+        async def broadcast(payload):
+            pass
+
+        controller = SamplingController(FakeConfig(), ssh, FakeTransfer(), FakeBurn(), broadcast)
+        await controller.reserve_apply(250, ["node-1"])
+        await controller.run_reserved_apply(250, ["node-1"], {"node-1": False})
+
+        for command in ssh.process_commands[:3]:
+            assert "git rev-parse --is-inside-work-tree" in command
+
+    asyncio.run(run_test())
 
 
 def test_sampling_controller_runs_reset_pull_scp_then_builds():

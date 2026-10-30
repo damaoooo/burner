@@ -193,7 +193,7 @@ class SamplingController:
                 machine_id,
                 sampling_ms,
                 step="reset",
-                command=reset_command(),
+                command=git_only("reset", reset_command()),
                 completed=0,
                 total=total,
             )
@@ -201,7 +201,7 @@ class SamplingController:
                 machine_id,
                 sampling_ms,
                 step="pull",
-                command="git pull --recurse-submodules",
+                command=git_only("pull", "git pull --recurse-submodules"),
                 completed=1,
                 total=total,
             )
@@ -209,7 +209,10 @@ class SamplingController:
                 machine_id,
                 sampling_ms,
                 step="submodules",
-                command="git submodule sync --recursive && git submodule update --init --recursive --force",
+                command=git_only(
+                    "submodules",
+                    "git submodule sync --recursive && git submodule update --init --recursive --force",
+                ),
                 completed=2,
                 total=total,
             )
@@ -359,6 +362,19 @@ class SamplingController:
 def build_command(sampling_ms: int, command: str) -> str:
     sampling_ms = validate_sampling_ms(sampling_ms)
     return f"BURNER_CONTROL_INTERVAL_MS={sampling_ms} {command}"
+
+
+def git_only(step: str, command: str) -> str:
+    """Run ``command`` only in a git checkout.
+
+    Nodes deployed by rsync have no .git; the sync step still pushes the
+    sources the build needs, so the git steps are skipped there.
+    """
+    return (
+        "if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then "
+        f"{command}; "
+        f"else echo {shlex.quote(f'not a git checkout; skipping {step}')}; fi"
+    )
 
 
 def reset_command() -> str:
