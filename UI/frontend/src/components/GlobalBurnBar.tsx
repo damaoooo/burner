@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { extractErrorMessage, startBurn, stopBurn } from "../api/client";
 import { useAppState } from "../state/AppState";
-import type { BurnStartRequest, JobInfo, MachineState, RunMode, SyncMode } from "../types";
+import type { AppState, BurnStartRequest, JobInfo, MachineState, RunMode, SyncMode } from "../types";
 
 interface Props {
   onToast: (message: string, kind?: "info" | "error" | "success") => void;
@@ -36,6 +36,7 @@ export default function GlobalBurnBar({ onToast }: Props) {
   const parsedSamplingMs = parseSamplingMs(state.samplingMs);
   const samplingDirty = parsedSamplingMs !== undefined && parsedSamplingMs !== state.appliedSamplingMs;
   const startDisabled = state.samplingBuild.running || parsedSamplingMs === undefined || samplingDirty;
+  const waveformSource = describeWaveformSource(state);
 
   useEffect(() => {
     if (activeJobs.length > 0 && progressStartedAt === null) {
@@ -130,9 +131,7 @@ export default function GlobalBurnBar({ onToast }: Props) {
     }
 
     const machines = selected.map((machine) => {
-      const waveformName = state.usePerMachineWaveform
-        ? state.perMachineWaveformNames[machine.config.id] || state.globalWaveformName
-        : state.globalWaveformName;
+      const waveformName = waveformFor(state, machine.config.id);
       const gpuAvailable = machineHasGpu(machine);
       return {
         id: machine.config.id,
@@ -232,13 +231,20 @@ export default function GlobalBurnBar({ onToast }: Props) {
         >
           Stop All
         </button>
+        <span className={`burn-source ${waveformSource.kind}`} title="What Start Burn will run">
+          {waveformSource.text}
+        </span>
       </div>
 
       {pendingStart && (
         <div className="modal-backdrop" role="dialog" aria-modal="true">
           <div className="modal wide-modal">
             <h3>Confirm Schedule</h3>
-            <p className="modal-summary">{describePlan(pendingStart.planned)}</p>
+            <p className="modal-summary">
+              {describePlan(pendingStart.planned)}
+              <br />
+              {waveformSource.text}
+            </p>
             <ScheduleSummary planned={pendingStart.planned} />
             <div className="modal-actions">
               <button type="button" className="secondary-button" onClick={() => setPendingStart(null)}>
@@ -286,6 +292,38 @@ export default function GlobalBurnBar({ onToast }: Props) {
       )}
     </>
   );
+}
+
+function waveformFor(state: AppState, machineId: string): string {
+  return state.usePerMachineWaveform
+    ? state.perMachineWaveformNames[machineId] || state.globalWaveformName
+    : state.globalWaveformName;
+}
+
+function describeWaveformSource(state: AppState): { text: string; kind: "profiles" | "global" | "mixed" } {
+  const enabled = Object.values(state.machines).filter((machine) => machine.burnEnabled);
+  const connected = enabled.filter((machine) => machine.connectionStatus === "connected");
+  const machines = connected.length > 0 ? connected : enabled;
+  const timing = `period ${state.period || "?"} s · duration ${state.duration || "?"} s`;
+  if (machines.length === 0) {
+    return { text: `No machines enabled · ${timing}`, kind: "global" };
+  }
+  const profileNames = new Set(
+    state.waveforms.filter((waveform) => waveform.source === "profiles").map((waveform) => waveform.name)
+  );
+  const names = machines.map((machine) => waveformFor(state, machine.config.id) || "(none)");
+  const profiles = names.filter((name) => profileNames.has(name)).length;
+  const others = new Map<string, number>();
+  for (const name of names.filter((item) => !profileNames.has(item))) {
+    others.set(name, (others.get(name) ?? 0) + 1);
+  }
+  const parts = [
+    ...(profiles > 0 ? [`${profiles} CSV profile${profiles === 1 ? "" : "s"}`] : []),
+    ...[...others.entries()].map(([name, count]) => `${name} × ${count}`)
+  ];
+  const mode = state.usePerMachineWaveform ? "Per-machine" : "Global";
+  const kind = profiles === names.length ? "profiles" : profiles === 0 ? "global" : "mixed";
+  return { text: `${mode}: ${parts.join(" + ")} · ${timing}`, kind };
 }
 
 function describePlan(planned: PlannedWindow[]): string {

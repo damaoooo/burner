@@ -381,6 +381,30 @@ button:disabled {
   box-shadow: var(--shadow-soft);
 }
 
+.burn-source {
+  grid-column: 1 / -1;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 13px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.burn-source.profiles {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.burn-source.global {
+  background: var(--panel-strong);
+  color: var(--text-soft);
+}
+
+.burn-source.mixed {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
 .start-stack {
   display: grid;
   gap: 8px;
