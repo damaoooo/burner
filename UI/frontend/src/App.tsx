@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import BurnPanel from "./components/BurnPanel";
 import ChokerPanel from "./components/ChokerPanel";
+import PowerPanel, { POWER_EVENT } from "./components/PowerPanel";
 import GpuWorkloadPanel from "./components/GpuWorkloadPanel";
 import GlobalBurnBar from "./components/GlobalBurnBar";
 import MachineCard from "./components/MachineCard";
@@ -52,6 +53,11 @@ export default function App() {
   }, []);
 
   const handleWsEvent = useCallback((event: WsEvent) => {
+    if (event.event === "power_samples" || event.event === "power_status") {
+      // High-rate data goes straight to the Power panel instead of the reducer.
+      window.dispatchEvent(new CustomEvent(POWER_EVENT, { detail: event }));
+      return;
+    }
     if (event.event === "machine_status") {
       dispatch({
         type: "setMachineStatus",
@@ -352,6 +358,7 @@ export default function App() {
   const tabBadges: Record<TabId, string | undefined> = {
     burn: activeJobs + scheduledJobs > 0 ? String(activeJobs + scheduledJobs) : undefined,
     machines: `${connectedCount}/${machines.length}`,
+    power: undefined,
     workloads: activeWorkloads > 0 ? String(activeWorkloads) : undefined,
     gpu: activeGpuWorkloads > 0 ? String(activeGpuWorkloads) : undefined,
     choker: undefined
@@ -522,6 +529,10 @@ export default function App() {
           <BurnPanel onToast={addToast} />
         </div>
 
+        <div role="tabpanel" id="panel-power" aria-labelledby="tab-power" hidden={tab !== "power"}>
+          <PowerPanel onToast={addToast} visible={tab === "power"} />
+        </div>
+
         <div role="tabpanel" id="panel-workloads" aria-labelledby="tab-workloads" hidden={tab !== "workloads"}>
           <ServerRoomWorkloadPanel onToast={addToast} />
         </div>
@@ -588,11 +599,12 @@ export default function App() {
   );
 }
 
-type TabId = "burn" | "machines" | "workloads" | "gpu" | "choker";
+type TabId = "burn" | "machines" | "power" | "workloads" | "gpu" | "choker";
 
 const TABS: Array<{ id: TabId; label: string }> = [
   { id: "burn", label: "Burn" },
   { id: "machines", label: "Machines" },
+  { id: "power", label: "Power" },
   { id: "workloads", label: "Server Room" },
   { id: "gpu", label: "GPU Workload" },
   { id: "choker", label: "Choker" }

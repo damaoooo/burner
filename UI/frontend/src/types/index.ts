@@ -253,7 +253,21 @@ export interface SamplingBuildState {
   message?: string;
 }
 
+export interface PowerStatus {
+  running: boolean;
+  machines: string[];
+  interval: number;
+  started_at: number | null;
+  latest: Record<string, number>;
+  errors: Record<string, string>;
+}
+
+/** [epoch seconds, total watts, number of nodes in the sum] */
+export type PowerSample = [number, number, number];
+
 export type WsEvent =
+  | { event: "power_samples"; samples: PowerSample[]; latest: Record<string, number> }
+  | ({ event: "power_status" } & PowerStatus)
   | {
       event: "machine_status";
       id: string;

@@ -20,7 +20,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -34,6 +34,7 @@ from gpu_workload_controller import (
     GpuWorkloadError,
 )
 from machine_info import query_hw_info
+from power_monitor import DEFAULT_INTERVAL as DEFAULT_POWER_INTERVAL, PowerMonitor, PowerMonitorError
 from profile_library import (
     DEFAULT_NORMALIZE,
     DEFAULT_RESOLUTION_MS,
@@ -58,6 +59,11 @@ from workload_controller import (
 class WaveformCreate(BaseModel):
     name: str
     points: list[tuple[float, float]]
+
+
+class PowerStartPayload(BaseModel):
+    machine_ids: list[str] | None = None
+    interval_ms: int = round(DEFAULT_POWER_INTERVAL * 1000)
 
 
 class WaveformAssignmentsPayload(BaseModel):
@@ -247,6 +253,7 @@ gpu_workload_controller = GpuWorkloadController(
     workload_controller,
     broadcast,
 )
+power_monitor = PowerMonitor(ssh_manager, broadcast)
 
 
 async def on_machine_status(machine_id: str, status: str, message: str | None) -> None:
@@ -368,6 +375,44 @@ async def put_waveform_assignments(payload: WaveformAssignmentsPayload):
         return save_assignments(ASSIGNMENTS_PATH, payload.use_per_machine, payload.assignments, known)
     except AssignmentError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/power/start")
+async def start_power_monitor(payload: PowerStartPayload):
+    machine_ids = payload.machine_ids
+    if machine_ids is None:
+        machine_ids = [
+            machine.id
+            for machine in config_store.list_machines()
+            if ssh_manager.status_for(machine.id) == "connected"
+        ]
+    try:
+        return await power_monitor.start(machine_ids, payload.interval_ms / 1000)
+    except PowerMonitorError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/power/stop")
+async def stop_power_monitor():
+    return await power_monitor.stop()
+
+
+@app.get("/api/power/history")
+async def power_history(seconds: float = 600):
+    return {"status": power_monitor.status(), "samples": [list(row) for row in power_monitor.history(seconds)]}
+
+
+@app.get("/api/power/export.csv")
+async def export_power_csv():
+    try:
+        body = power_monitor.to_csv()
+    except PowerMonitorError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return Response(
+        content=body,
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="burner_power.csv"'},
+    )
 
 
 @app.get("/api/profiles")
@@ -869,6 +914,7 @@ async def _stop_all_jobs() -> None:
         burn_controller.stop_burn(job_ids="all"),
         workload_controller.stop_workloads(job_ids="all"),
         gpu_workload_controller.stop(job_ids="all"),
+        power_monitor.stop(),
     )
 
 

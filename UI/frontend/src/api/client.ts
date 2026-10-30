@@ -12,6 +12,8 @@ import type {
   MachineApiRecord,
   Point,
   ProfileLibrarySummary,
+  PowerSample,
+  PowerStatus,
   ProfileNormalize,
   WaveformAssignments,
   WaveformInfo,
@@ -97,6 +99,25 @@ export async function saveWaveformAssignments(payload: WaveformAssignments): Pro
   const { data } = await http.put<WaveformAssignments>("/waveform-assignments", payload);
   return data;
 }
+
+export async function fetchPowerHistory(seconds: number): Promise<{ status: PowerStatus; samples: PowerSample[] }> {
+  const { data } = await http.get<{ status: PowerStatus; samples: PowerSample[] }>("/power/history", {
+    params: { seconds }
+  });
+  return data;
+}
+
+export async function startPowerMonitor(intervalMs: number): Promise<PowerStatus> {
+  const { data } = await http.post<PowerStatus>("/power/start", { interval_ms: intervalMs });
+  return data;
+}
+
+export async function stopPowerMonitor(): Promise<PowerStatus> {
+  const { data } = await http.post<PowerStatus>("/power/stop");
+  return data;
+}
+
+export const POWER_CSV_URL = "/api/power/export.csv";
 
 export async function fetchProfileSummary(): Promise<ProfileLibrarySummary> {
   const { data } = await http.get<ProfileLibrarySummary>("/profiles");

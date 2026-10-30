@@ -294,7 +294,7 @@ interface ChartTheme {
   tooltipText: string;
 }
 
-function useChartTheme(): ChartTheme {
+export function useChartTheme(): ChartTheme {
   const [theme, setTheme] = useState<ChartTheme>(() => readChartTheme());
 
   useEffect(() => {
